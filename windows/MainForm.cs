@@ -226,10 +226,14 @@ internal sealed class MainForm : Form
         var page = Page("设置");
         var layout = new TableLayoutPanel
         {
-            Dock = DockStyle.Fill, Padding = new Padding(28, 24, 28, 24), ColumnCount = 2, RowCount = 5,
+            Dock = DockStyle.Fill, Padding = new Padding(28, 24, 28, 24), ColumnCount = 2, RowCount = 4,
         };
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 54));
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 46));
+        layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         var title = TextLabel("任务栏显示", 20, FontStyle.Bold);
         layout.Controls.Add(title, 0, 0);
         layout.SetColumnSpan(title, 2);
@@ -245,7 +249,10 @@ internal sealed class MainForm : Form
         layout.Controls.Add(traySymbols, 0, 2);
 
         var details = new Panel { Dock = DockStyle.Fill, BackColor = Surface, Padding = new Padding(18), Margin = new Padding(18, 0, 0, 0) };
-        var detailFlow = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.TopDown, WrapContents = false };
+        var detailFlow = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Fill, FlowDirection = FlowDirection.TopDown, WrapContents = false, AutoScroll = true,
+        };
         detailFlow.Controls.Add(TextLabel("运行设置", 14, FontStyle.Bold));
         startupCheck.Text = "登录 Windows 后自动启动";
         startupCheck.AutoSize = true;
