@@ -1,0 +1,96 @@
+name: PriceReminder
+options:
+  bundleIdPrefix: world.zcn
+  deploymentTarget:
+    iOS: "17.2"
+    macOS: "14.0"
+packages:
+  PriceCore:
+    path: PriceCore
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    CURRENT_PROJECT_VERSION: 1
+    MARKETING_VERSION: 0.1.0
+targets:
+  PriceReminderiOS:
+    type: application
+    platform: iOS
+    sources:
+      - Shared
+      - iOS
+    dependencies:
+      - package: PriceCore
+      - target: PriceReminderLiveActivity
+        embed: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: world.zcn.pricereminder
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: P37Z567KMH
+        CODE_SIGN_ENTITLEMENTS: iOS/PriceReminder.entitlements
+        PRICE_REMINDER_SERVER_URL: "https://keyflow.zcn.world/price-reminder"
+      configs:
+        Debug:
+          APS_ENVIRONMENT: development
+        Release:
+          APS_ENVIRONMENT: production
+    info:
+      path: iOS/Info.plist
+      properties:
+        CFBundleDisplayName: 币价提醒
+        UILaunchScreen: {}
+        NSSupportsLiveActivities: true
+        NSSupportsLiveActivitiesFrequentUpdates: true
+        PriceReminderServerURL: $(PRICE_REMINDER_SERVER_URL)
+  PriceReminderLiveActivity:
+    type: app-extension
+    platform: iOS
+    sources:
+      - LiveActivity
+      - Shared/LiveActivityAttributes.swift
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: world.zcn.pricereminder.liveactivity
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: P37Z567KMH
+        CODE_SIGN_ENTITLEMENTS: LiveActivity/LiveActivity.entitlements
+        SKIP_INSTALL: true
+    info:
+      path: LiveActivity/Info.plist
+      properties:
+        CFBundleDisplayName: 币价提醒实时活动
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
+  PriceReminderMac:
+    type: application
+    platform: macOS
+    sources:
+      - Shared
+      - macOS
+    dependencies:
+      - package: PriceCore
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: world.zcn.pricereminder.mac
+        CODE_SIGN_ENTITLEMENTS: macOS/PriceReminderMac.entitlements
+        PRICE_REMINDER_SERVER_URL: "https://keyflow.zcn.world/price-reminder"
+    info:
+      path: macOS/Info.plist
+      properties:
+        CFBundleDisplayName: 币价提醒
+        LSUIElement: true
+        PriceReminderServerURL: $(PRICE_REMINDER_SERVER_URL)
+schemes:
+  PriceReminderiOS:
+    build:
+      targets:
+        PriceReminderiOS: all
+    run:
+      config: Debug
+  PriceReminderMac:
+    build:
+      targets:
+        PriceReminderMac: all
+    run:
+      config: Debug

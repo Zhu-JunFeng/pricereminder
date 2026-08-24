@@ -1,0 +1,643 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		21186014C8458EFD8DDEA50C /* RulesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 09D566A30E41195CC939649E /* RulesView.swift */; };
+		316DA64C5D60A96CE9DC4B02 /* KeychainStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9AF183E649513D6146D32EC8 /* KeychainStore.swift */; };
+		38A991A21C14D7CABC1DBB8A /* ServerConnectionService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F1C5C500840148654146744 /* ServerConnectionService.swift */; };
+		3F589EC062C0C63505C84DC8 /* PriceCore in Frameworks */ = {isa = PBXBuildFile; productRef = 6A37A43CF7D8DFEAB5162FA6 /* PriceCore */; };
+		4BC447D1A4A04E6BB374CD7C /* KeychainStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9AF183E649513D6146D32EC8 /* KeychainStore.swift */; };
+		4BDBC6E3FF634126A6118ACE /* PriceCore in Frameworks */ = {isa = PBXBuildFile; productRef = 5C49F97E28440CC1256DD74D /* PriceCore */; };
+		5F31A9D1089CDF2D8579B736 /* LiveActivityAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = E806D7F906592F5608CF61FF /* LiveActivityAttributes.swift */; };
+		5FBC6F577BD190469CB9991F /* LocalPersistence.swift in Sources */ = {isa = PBXBuildFile; fileRef = E36BA06AF075A219870352D8 /* LocalPersistence.swift */; };
+		684F551717DDDCDAC75E9323 /* ServerConnectionService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F1C5C500840148654146744 /* ServerConnectionService.swift */; };
+		820DD9CA9ABFF79DF332CD67 /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 44B52C351F8A2CD37521868A /* RootView.swift */; };
+		956F82013453472795DE6843 /* LiveActivityAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = E806D7F906592F5608CF61FF /* LiveActivityAttributes.swift */; };
+		981A77511035AFE444AE9ECC /* PriceReminderApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3A39EEB6A0E0A0614E785122 /* PriceReminderApp.swift */; };
+		9D00C928AE8A2B8232891A9D /* AppTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 35FC36F1F86B793EBF41A437 /* AppTheme.swift */; };
+		9F9EF7312FBDF02410C3E0B3 /* AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7FC178CC7C61F0285EB1ADBC /* AppModel.swift */; };
+		AF8C0B453E446D075F1BF756 /* AppTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 35FC36F1F86B793EBF41A437 /* AppTheme.swift */; };
+		BD3AA50C4E206A8359C56FFD /* LocalPersistence.swift in Sources */ = {isa = PBXBuildFile; fileRef = E36BA06AF075A219870352D8 /* LocalPersistence.swift */; };
+		BF400B4419418921D5ADBEAE /* PriceReminderMacApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 296AA8DF50B1B445C31A0576 /* PriceReminderMacApp.swift */; };
+		C16DA9CF1FF12D8A1461297B /* PriceReminderLiveActivity.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = BEA143AFA717AFA289712A42 /* PriceReminderLiveActivity.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		E2B52650D11841AB1B451D9E /* MarketView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 314D56B0D01632ED36E5BCD6 /* MarketView.swift */; };
+		E74388B933A1D8976F2EA5B7 /* IOSBackgroundService.swift in Sources */ = {isa = PBXBuildFile; fileRef = C194C507DD39B34FF0C339F8 /* IOSBackgroundService.swift */; };
+		E83F5EDB408B10E6A8D1249E /* PriceLiveActivityWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3ED0F0877B080D058763593E /* PriceLiveActivityWidget.swift */; };
+		EC7AC508FD8D727342F2F967 /* AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7FC178CC7C61F0285EB1ADBC /* AppModel.swift */; };
+		F448114E1847F1AE3A9766C8 /* LiveActivityAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = E806D7F906592F5608CF61FF /* LiveActivityAttributes.swift */; };
+		FB8A9ADCB0906767E9B9FF54 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0101632F75CF578A4946DFF7 /* SettingsView.swift */; };
+		FD80E54CF86F4209A62DA3E8 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA3F0E6CE67A49D166FFC702 /* AppDelegate.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		34698DBD4A88409573314C8B /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 0F63430C08179D67BE751B6B /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 39DC99777F6047FC2E257168;
+			remoteInfo = PriceReminderLiveActivity;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		9D36E7A8CA67AC49E30F99C9 /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				C16DA9CF1FF12D8A1461297B /* PriceReminderLiveActivity.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
+/* Begin PBXFileReference section */
+		0101632F75CF578A4946DFF7 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
+		09D566A30E41195CC939649E /* RulesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RulesView.swift; sourceTree = "<group>"; };
+		0F3993D614E8E4E0B82689DD /* PriceReminder.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = PriceReminder.entitlements; sourceTree = "<group>"; };
+		296AA8DF50B1B445C31A0576 /* PriceReminderMacApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PriceReminderMacApp.swift; sourceTree = "<group>"; };
+		314D56B0D01632ED36E5BCD6 /* MarketView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarketView.swift; sourceTree = "<group>"; };
+		35FC36F1F86B793EBF41A437 /* AppTheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppTheme.swift; sourceTree = "<group>"; };
+		3A39EEB6A0E0A0614E785122 /* PriceReminderApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PriceReminderApp.swift; sourceTree = "<group>"; };
+		3ED0F0877B080D058763593E /* PriceLiveActivityWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PriceLiveActivityWidget.swift; sourceTree = "<group>"; };
+		44B52C351F8A2CD37521868A /* RootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootView.swift; sourceTree = "<group>"; };
+		4D85A9280F4CE0B38BBF77C8 /* LiveActivity.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = LiveActivity.entitlements; sourceTree = "<group>"; };
+		6E5F2A2CB80CA4F7E9608919 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		756EF9E9CD42F04B114B4726 /* PriceReminderMac.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = PriceReminderMac.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		7FC178CC7C61F0285EB1ADBC /* AppModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModel.swift; sourceTree = "<group>"; };
+		8F1C5C500840148654146744 /* ServerConnectionService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerConnectionService.swift; sourceTree = "<group>"; };
+		9AF183E649513D6146D32EC8 /* KeychainStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainStore.swift; sourceTree = "<group>"; };
+		B3E34B450C0650EF00381106 /* PriceCore */ = {isa = PBXFileReference; lastKnownFileType = folder; name = PriceCore; path = PriceCore; sourceTree = SOURCE_ROOT; };
+		BEA143AFA717AFA289712A42 /* PriceReminderLiveActivity.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = PriceReminderLiveActivity.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		C194C507DD39B34FF0C339F8 /* IOSBackgroundService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IOSBackgroundService.swift; sourceTree = "<group>"; };
+		CFD80E1A07BE705904E2E26C /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		D0700451C9BD2F483CB76016 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		DA3F0E6CE67A49D166FFC702 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
+		E36BA06AF075A219870352D8 /* LocalPersistence.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalPersistence.swift; sourceTree = "<group>"; };
+		E806D7F906592F5608CF61FF /* LiveActivityAttributes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveActivityAttributes.swift; sourceTree = "<group>"; };
+		F6D8663169CFEEF5607428AA /* PriceReminderiOS.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = PriceReminderiOS.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		FCA3D39583078A48C0EED19F /* PriceReminderMac.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = PriceReminderMac.entitlements; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		2F4ABD6506BCD72715FC44F2 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				4BDBC6E3FF634126A6118ACE /* PriceCore in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		AB4C49EF04206C9A90EB1A3F /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				3F589EC062C0C63505C84DC8 /* PriceCore in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		1B817AA005E599E589D446E4 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				F6D8663169CFEEF5607428AA /* PriceReminderiOS.app */,
+				BEA143AFA717AFA289712A42 /* PriceReminderLiveActivity.appex */,
+				756EF9E9CD42F04B114B4726 /* PriceReminderMac.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		2A7F79DB4CB4590AD320DB60 /* iOS */ = {
+			isa = PBXGroup;
+			children = (
+				DA3F0E6CE67A49D166FFC702 /* AppDelegate.swift */,
+				D0700451C9BD2F483CB76016 /* Info.plist */,
+				C194C507DD39B34FF0C339F8 /* IOSBackgroundService.swift */,
+				314D56B0D01632ED36E5BCD6 /* MarketView.swift */,
+				0F3993D614E8E4E0B82689DD /* PriceReminder.entitlements */,
+				3A39EEB6A0E0A0614E785122 /* PriceReminderApp.swift */,
+				44B52C351F8A2CD37521868A /* RootView.swift */,
+				09D566A30E41195CC939649E /* RulesView.swift */,
+				0101632F75CF578A4946DFF7 /* SettingsView.swift */,
+			);
+			path = iOS;
+			sourceTree = "<group>";
+		};
+		58FADF429E2B6ED32724C31F /* macOS */ = {
+			isa = PBXGroup;
+			children = (
+				6E5F2A2CB80CA4F7E9608919 /* Info.plist */,
+				FCA3D39583078A48C0EED19F /* PriceReminderMac.entitlements */,
+				296AA8DF50B1B445C31A0576 /* PriceReminderMacApp.swift */,
+			);
+			path = macOS;
+			sourceTree = "<group>";
+		};
+		7E347DD0E765D3259610B7A0 /* LiveActivity */ = {
+			isa = PBXGroup;
+			children = (
+				CFD80E1A07BE705904E2E26C /* Info.plist */,
+				4D85A9280F4CE0B38BBF77C8 /* LiveActivity.entitlements */,
+				3ED0F0877B080D058763593E /* PriceLiveActivityWidget.swift */,
+			);
+			path = LiveActivity;
+			sourceTree = "<group>";
+		};
+		BFB5EA7D0F81DED66F897613 = {
+			isa = PBXGroup;
+			children = (
+				2A7F79DB4CB4590AD320DB60 /* iOS */,
+				7E347DD0E765D3259610B7A0 /* LiveActivity */,
+				58FADF429E2B6ED32724C31F /* macOS */,
+				E1BFA03225EEE173963F5E3B /* Packages */,
+				FF5E26A46889042376F17A48 /* Shared */,
+				1B817AA005E599E589D446E4 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		E1BFA03225EEE173963F5E3B /* Packages */ = {
+			isa = PBXGroup;
+			children = (
+				B3E34B450C0650EF00381106 /* PriceCore */,
+			);
+			name = Packages;
+			sourceTree = "<group>";
+		};
+		FF5E26A46889042376F17A48 /* Shared */ = {
+			isa = PBXGroup;
+			children = (
+				7FC178CC7C61F0285EB1ADBC /* AppModel.swift */,
+				35FC36F1F86B793EBF41A437 /* AppTheme.swift */,
+				9AF183E649513D6146D32EC8 /* KeychainStore.swift */,
+				E806D7F906592F5608CF61FF /* LiveActivityAttributes.swift */,
+				E36BA06AF075A219870352D8 /* LocalPersistence.swift */,
+				8F1C5C500840148654146744 /* ServerConnectionService.swift */,
+			);
+			path = Shared;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		0CDE2DCC9FC15A38A2F5E3AC /* PriceReminderiOS */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 8FB2C7FCA95040A21E959D49 /* Build configuration list for PBXNativeTarget "PriceReminderiOS" */;
+			buildPhases = (
+				9570E50452B1399E599A0AED /* Sources */,
+				AB4C49EF04206C9A90EB1A3F /* Frameworks */,
+				9D36E7A8CA67AC49E30F99C9 /* Embed Foundation Extensions */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				519BC67E5DA4EC8DDBB5D066 /* PBXTargetDependency */,
+			);
+			name = PriceReminderiOS;
+			packageProductDependencies = (
+				6A37A43CF7D8DFEAB5162FA6 /* PriceCore */,
+			);
+			productName = PriceReminderiOS;
+			productReference = F6D8663169CFEEF5607428AA /* PriceReminderiOS.app */;
+			productType = "com.apple.product-type.application";
+		};
+		39DC99777F6047FC2E257168 /* PriceReminderLiveActivity */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 80A4A81DDE8BE7F8226BCEBE /* Build configuration list for PBXNativeTarget "PriceReminderLiveActivity" */;
+			buildPhases = (
+				3ECE8251C0C137623AEC5B00 /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = PriceReminderLiveActivity;
+			packageProductDependencies = (
+			);
+			productName = PriceReminderLiveActivity;
+			productReference = BEA143AFA717AFA289712A42 /* PriceReminderLiveActivity.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
+		C48E647E61883A43E330635A /* PriceReminderMac */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = B9514F11D8B20F514A57A800 /* Build configuration list for PBXNativeTarget "PriceReminderMac" */;
+			buildPhases = (
+				73787435064E2867B1C36422 /* Sources */,
+				2F4ABD6506BCD72715FC44F2 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = PriceReminderMac;
+			packageProductDependencies = (
+				5C49F97E28440CC1256DD74D /* PriceCore */,
+			);
+			productName = PriceReminderMac;
+			productReference = 756EF9E9CD42F04B114B4726 /* PriceReminderMac.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		0F63430C08179D67BE751B6B /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1430;
+				TargetAttributes = {
+					0CDE2DCC9FC15A38A2F5E3AC = {
+						DevelopmentTeam = P37Z567KMH;
+						ProvisioningStyle = Automatic;
+					};
+					39DC99777F6047FC2E257168 = {
+						DevelopmentTeam = P37Z567KMH;
+						ProvisioningStyle = Automatic;
+					};
+				};
+			};
+			buildConfigurationList = 86C681961E43C11783D7287D /* Build configuration list for PBXProject "PriceReminder" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = BFB5EA7D0F81DED66F897613;
+			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				6C142D69AC535D7C87766F29 /* XCLocalSwiftPackageReference "PriceCore" */,
+			);
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 1B817AA005E599E589D446E4 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				0CDE2DCC9FC15A38A2F5E3AC /* PriceReminderiOS */,
+				39DC99777F6047FC2E257168 /* PriceReminderLiveActivity */,
+				C48E647E61883A43E330635A /* PriceReminderMac */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXSourcesBuildPhase section */
+		3ECE8251C0C137623AEC5B00 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				5F31A9D1089CDF2D8579B736 /* LiveActivityAttributes.swift in Sources */,
+				E83F5EDB408B10E6A8D1249E /* PriceLiveActivityWidget.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		73787435064E2867B1C36422 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				EC7AC508FD8D727342F2F967 /* AppModel.swift in Sources */,
+				AF8C0B453E446D075F1BF756 /* AppTheme.swift in Sources */,
+				316DA64C5D60A96CE9DC4B02 /* KeychainStore.swift in Sources */,
+				956F82013453472795DE6843 /* LiveActivityAttributes.swift in Sources */,
+				5FBC6F577BD190469CB9991F /* LocalPersistence.swift in Sources */,
+				BF400B4419418921D5ADBEAE /* PriceReminderMacApp.swift in Sources */,
+				684F551717DDDCDAC75E9323 /* ServerConnectionService.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		9570E50452B1399E599A0AED /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				FD80E54CF86F4209A62DA3E8 /* AppDelegate.swift in Sources */,
+				9F9EF7312FBDF02410C3E0B3 /* AppModel.swift in Sources */,
+				9D00C928AE8A2B8232891A9D /* AppTheme.swift in Sources */,
+				E74388B933A1D8976F2EA5B7 /* IOSBackgroundService.swift in Sources */,
+				4BC447D1A4A04E6BB374CD7C /* KeychainStore.swift in Sources */,
+				F448114E1847F1AE3A9766C8 /* LiveActivityAttributes.swift in Sources */,
+				BD3AA50C4E206A8359C56FFD /* LocalPersistence.swift in Sources */,
+				E2B52650D11841AB1B451D9E /* MarketView.swift in Sources */,
+				981A77511035AFE444AE9ECC /* PriceReminderApp.swift in Sources */,
+				820DD9CA9ABFF79DF332CD67 /* RootView.swift in Sources */,
+				21186014C8458EFD8DDEA50C /* RulesView.swift in Sources */,
+				38A991A21C14D7CABC1DBB8A /* ServerConnectionService.swift in Sources */,
+				FB8A9ADCB0906767E9B9FF54 /* SettingsView.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		519BC67E5DA4EC8DDBB5D066 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 39DC99777F6047FC2E257168 /* PriceReminderLiveActivity */;
+			targetProxy = 34698DBD4A88409573314C8B /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		1B311AA04F408DA0DD57BCFD /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = macOS/PriceReminderMac.entitlements;
+				COMBINE_HIDPI_IMAGES = YES;
+				INFOPLIST_FILE = macOS/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				PRICE_REMINDER_SERVER_URL = "https://keyflow.zcn.world/price-reminder";
+				PRODUCT_BUNDLE_IDENTIFIER = world.zcn.pricereminder.mac;
+				SDKROOT = macosx;
+			};
+			name = Debug;
+		};
+		839011E4F4EAA533B209642B /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.2;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 0.1.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 6.0;
+			};
+			name = Release;
+		};
+		A682EAE93167B1BE971AF6F0 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.2;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 0.1.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 6.0;
+			};
+			name = Debug;
+		};
+		B121AA57D8D6B4D6485F868B /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = macOS/PriceReminderMac.entitlements;
+				COMBINE_HIDPI_IMAGES = YES;
+				INFOPLIST_FILE = macOS/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				PRICE_REMINDER_SERVER_URL = "https://keyflow.zcn.world/price-reminder";
+				PRODUCT_BUNDLE_IDENTIFIER = world.zcn.pricereminder.mac;
+				SDKROOT = macosx;
+			};
+			name = Release;
+		};
+		B715A77A291649BE4C6DD6AE /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APS_ENVIRONMENT = production;
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = iOS/PriceReminder.entitlements;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = P37Z567KMH;
+				INFOPLIST_FILE = iOS/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRICE_REMINDER_SERVER_URL = "https://keyflow.zcn.world/price-reminder";
+				PRODUCT_BUNDLE_IDENTIFIER = world.zcn.pricereminder;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		BBA30CECD8856194EC474E7D /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = LiveActivity/LiveActivity.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = P37Z567KMH;
+				INFOPLIST_FILE = LiveActivity/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = world.zcn.pricereminder.liveactivity;
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		CF705A2E0B2E4228B2CD56C5 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APS_ENVIRONMENT = development;
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = iOS/PriceReminder.entitlements;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = P37Z567KMH;
+				INFOPLIST_FILE = iOS/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRICE_REMINDER_SERVER_URL = "https://keyflow.zcn.world/price-reminder";
+				PRODUCT_BUNDLE_IDENTIFIER = world.zcn.pricereminder;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		F2BB88109F7F8EBD11E8D887 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = LiveActivity/LiveActivity.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = P37Z567KMH;
+				INFOPLIST_FILE = LiveActivity/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = world.zcn.pricereminder.liveactivity;
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		80A4A81DDE8BE7F8226BCEBE /* Build configuration list for PBXNativeTarget "PriceReminderLiveActivity" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				BBA30CECD8856194EC474E7D /* Debug */,
+				F2BB88109F7F8EBD11E8D887 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		86C681961E43C11783D7287D /* Build configuration list for PBXProject "PriceReminder" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A682EAE93167B1BE971AF6F0 /* Debug */,
+				839011E4F4EAA533B209642B /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		8FB2C7FCA95040A21E959D49 /* Build configuration list for PBXNativeTarget "PriceReminderiOS" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				CF705A2E0B2E4228B2CD56C5 /* Debug */,
+				B715A77A291649BE4C6DD6AE /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		B9514F11D8B20F514A57A800 /* Build configuration list for PBXNativeTarget "PriceReminderMac" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				1B311AA04F408DA0DD57BCFD /* Debug */,
+				B121AA57D8D6B4D6485F868B /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		6C142D69AC535D7C87766F29 /* XCLocalSwiftPackageReference "PriceCore" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = PriceCore;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		5C49F97E28440CC1256DD74D /* PriceCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = PriceCore;
+		};
+		6A37A43CF7D8DFEAB5162FA6 /* PriceCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = PriceCore;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = 0F63430C08179D67BE751B6B /* Project object */;
+}

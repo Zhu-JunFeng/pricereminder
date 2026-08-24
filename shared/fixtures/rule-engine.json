@@ -1,0 +1,41 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "name": "rise_equal_threshold_then_rearm",
+      "rule": { "symbol": "BTCUSDT", "windowMinutes": 1, "thresholdPct": "5" },
+      "points": [
+        { "eventTime": 0, "price": "100" },
+        { "eventTime": 60000, "price": "105" },
+        { "eventTime": 61000, "price": "104" },
+        { "eventTime": 62000, "price": "106" }
+      ],
+      "expected": [
+        { "eventTime": 60000, "direction": "rise", "changePct": "5" },
+        { "eventTime": 62000, "direction": "rise", "changePct": "6" }
+      ]
+    },
+    {
+      "name": "directions_are_independent",
+      "rule": { "symbol": "ETHUSDT", "windowMinutes": 1, "thresholdPct": "5" },
+      "points": [
+        { "eventTime": 0, "price": "100" },
+        { "eventTime": 60000, "price": "106" },
+        { "eventTime": 61000, "price": "94" }
+      ],
+      "expected": [
+        { "eventTime": 60000, "direction": "rise", "changePct": "6" },
+        { "eventTime": 61000, "direction": "fall", "changePct": "-6" }
+      ]
+    },
+    {
+      "name": "insufficient_window_does_not_trigger",
+      "rule": { "symbol": "SOLUSDT", "windowMinutes": 5, "thresholdPct": "2" },
+      "points": [
+        { "eventTime": 0, "price": "100" },
+        { "eventTime": 299999, "price": "110" }
+      ],
+      "expected": []
+    }
+  ]
+}

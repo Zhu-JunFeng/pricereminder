@@ -1,0 +1,19 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: pricereminder
+      POSTGRES_USER: pricereminder
+      POSTGRES_PASSWORD: pricereminder
+    ports:
+      - "127.0.0.1:55432:5432"
+    volumes:
+      - pricereminder-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pricereminder"]
+      interval: 2s
+      timeout: 2s
+      retries: 20
+
+volumes:
+  pricereminder-postgres:

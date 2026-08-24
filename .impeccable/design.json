@@ -1,0 +1,66 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-08-22T00:00:00+08:00",
+  "title": "Design System: 币价提醒",
+  "extensions": {
+    "colorMeta": {
+      "primary": {
+        "role": "primary",
+        "displayName": "潮汐蓝绿",
+        "canonical": "oklch(0.52 0.11 200)",
+        "tonalRamp": ["oklch(0.15 0.05 200)", "oklch(0.25 0.07 200)", "oklch(0.36 0.09 200)", "oklch(0.47 0.11 200)", "oklch(0.58 0.10 200)", "oklch(0.70 0.08 200)", "oklch(0.83 0.05 200)", "oklch(0.95 0.02 200)"]
+      },
+      "rise": {
+        "role": "success",
+        "displayName": "克制上涨绿",
+        "canonical": "oklch(0.56 0.15 150)",
+        "tonalRamp": ["oklch(0.15 0.06 150)", "oklch(0.25 0.09 150)", "oklch(0.36 0.12 150)", "oklch(0.47 0.15 150)", "oklch(0.58 0.14 150)", "oklch(0.70 0.10 150)", "oklch(0.83 0.06 150)", "oklch(0.95 0.02 150)"]
+      },
+      "fall": {
+        "role": "error",
+        "displayName": "明确下跌红",
+        "canonical": "oklch(0.56 0.18 25)",
+        "tonalRamp": ["oklch(0.15 0.07 25)", "oklch(0.25 0.11 25)", "oklch(0.36 0.15 25)", "oklch(0.47 0.18 25)", "oklch(0.58 0.17 25)", "oklch(0.70 0.12 25)", "oklch(0.83 0.07 25)", "oklch(0.95 0.02 25)"]
+      }
+    },
+    "typographyMeta": {
+      "headline": { "displayName": "主价格", "purpose": "页面主价格与一级标题。" },
+      "body": { "displayName": "正文", "purpose": "状态解释、字段和操作文案。" }
+    },
+    "shadows": [],
+    "motion": [
+      { "name": "state", "value": "180ms cubic-bezier(0.22, 1, 0.36, 1)", "purpose": "连接、保存和选择状态切换。" }
+    ],
+    "breakpoints": []
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "唯一高强调操作。",
+      "html": "<button class=\"ds-btn-primary\">保存预警</button>",
+      "css": ".ds-btn-primary { background: oklch(0.52 0.11 200); color: white; border: 0; border-radius: 8px; padding: 12px 16px; font: 600 15px/1.2 sans-serif; transition: background 180ms cubic-bezier(0.22,1,0.36,1); } .ds-btn-primary:hover { background: oklch(0.47 0.11 200); } .ds-btn-primary:focus-visible { outline: 2px solid oklch(0.52 0.11 200); outline-offset: 2px; }"
+    },
+    {
+      "name": "Rule Field",
+      "kind": "input",
+      "refersTo": "field",
+      "description": "带单位的紧凑规则输入。",
+      "html": "<label class=\"ds-field-label\">时间窗口 <input class=\"ds-field\" value=\"5\" inputmode=\"numeric\"> 分钟</label>",
+      "css": ".ds-field-label { color: oklch(0.19 0.018 215); font: 500 13px/1.3 sans-serif; } .ds-field { width: 72px; margin: 6px 6px 0 0; padding: 10px 12px; color: oklch(0.19 0.018 215); background: oklch(0.97 0.006 200); border: 1px solid oklch(0.89 0.008 205); border-radius: 8px; font: 500 15px/1.2 sans-serif; } .ds-field:focus-visible { outline: 2px solid oklch(0.52 0.11 200); outline-offset: 1px; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "安静的行情仪表",
+    "overview": "界面服务于持续监控而不是交易冲动。纯净中性底色承载数据，海蓝绿只出现在主操作、选中状态和连接状态。",
+    "keyCharacteristics": ["状态一眼可见", "等宽数字", "跟随系统主题", "手机单主合约、Mac最多三个"],
+    "rules": [
+      { "name": "The One Signal Rule", "body": "海蓝绿只表达可操作或已连接状态。", "section": "colors" },
+      { "name": "The Numeric Rhythm Rule", "body": "变化价格使用等宽数字。", "section": "typography" },
+      { "name": "The Flat Instrument Rule", "body": "静态表面没有装饰性投影。", "section": "elevation" }
+    ],
+    "dos": ["Do 优先展示真实监控状态。", "Do 使用系统亮暗主题与平台原生交互。"],
+    "donts": ["Don't 做交易所行情大厅。", "Don't 使用霓虹加密终端或玻璃拟态。", "Don't 使用嵌套卡片。"]
+  }
+}
