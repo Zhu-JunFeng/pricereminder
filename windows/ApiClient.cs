@@ -1,4 +1,5 @@
 using System.Net.Http.Headers;
+using System.Net;
 using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
@@ -14,6 +15,8 @@ internal sealed class ApiClient
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = true };
     private readonly HttpClient http = new() { Timeout = TimeSpan.FromSeconds(15) };
     private readonly LocalStore store;
+    private readonly SemaphoreSlim authenticationGate = new(1, 1);
+    private bool tokenValidated;
 
     public ApiClient(LocalStore store) => this.store = store;
 
@@ -59,7 +62,7 @@ internal sealed class ApiClient
         };
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
         using var response = await http.SendAsync(request, cancellationToken);
-        response.EnsureSuccessStatusCode();
+        await EnsureSuccessAsync(response, cancellationToken);
 
         var socket = new ClientWebSocket();
         socket.Options.SetRequestHeader("Authorization", $"Bearer {token}");
@@ -108,7 +111,7 @@ internal sealed class ApiClient
         using var request = new HttpRequestMessage(HttpMethod.Get, $"{ServerBaseUrl}/v1/contracts");
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
         using var response = await http.SendAsync(request, cancellationToken);
-        response.EnsureSuccessStatusCode();
+        await EnsureSuccessAsync(response, cancellationToken);
         await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
         var payload = await JsonSerializer.DeserializeAsync<ContractsResponse>(stream, JsonOptions, cancellationToken);
         return payload?.Contracts ?? throw new InvalidDataException("服务端合约列表格式错误");
@@ -116,31 +119,69 @@ internal sealed class ApiClient
 
     private async Task<string> AuthenticatedTokenAsync(CancellationToken cancellationToken)
     {
-        if (!string.IsNullOrWhiteSpace(store.State.DeviceToken))
+        await authenticationGate.WaitAsync(cancellationToken);
+        try
         {
-            using var refresh = new HttpRequestMessage(HttpMethod.Post, $"{ServerBaseUrl}/v1/devices/refresh");
-            refresh.Headers.Authorization = new AuthenticationHeaderValue("Bearer", store.State.DeviceToken);
-            using var response = await http.SendAsync(refresh, cancellationToken);
-            if (response.IsSuccessStatusCode) return store.State.DeviceToken;
-            if ((int)response.StatusCode != 401) response.EnsureSuccessStatusCode();
-            store.State.DeviceToken = null;
-            store.Save();
-        }
+            if (tokenValidated && !string.IsNullOrWhiteSpace(store.State.DeviceToken))
+                return store.State.DeviceToken;
 
-        using var registration = new HttpRequestMessage(HttpMethod.Post, $"{ServerBaseUrl}/v1/devices/register")
+            if (!string.IsNullOrWhiteSpace(store.State.DeviceToken))
+            {
+                using var refresh = new HttpRequestMessage(HttpMethod.Post, $"{ServerBaseUrl}/v1/devices/refresh");
+                refresh.Headers.Authorization = new AuthenticationHeaderValue("Bearer", store.State.DeviceToken);
+                using var response = await http.SendAsync(refresh, cancellationToken);
+                if (response.IsSuccessStatusCode)
+                {
+                    tokenValidated = true;
+                    return store.State.DeviceToken;
+                }
+                if (response.StatusCode != HttpStatusCode.Unauthorized)
+                    await EnsureAuthenticationSuccessAsync(response, cancellationToken);
+                store.State.DeviceToken = null;
+                store.Save();
+            }
+
+            using var registration = new HttpRequestMessage(HttpMethod.Post, $"{ServerBaseUrl}/v1/devices/register")
+            {
+                Content = new StringContent(
+                    JsonSerializer.Serialize(new { platform = "windows", displayName = Environment.MachineName }),
+                    Encoding.UTF8, "application/json"),
+            };
+            using var created = await http.SendAsync(registration, cancellationToken);
+            await EnsureAuthenticationSuccessAsync(created, cancellationToken);
+            await using var stream = await created.Content.ReadAsStreamAsync(cancellationToken);
+            var result = await JsonSerializer.DeserializeAsync<RegistrationResponse>(stream, JsonOptions, cancellationToken)
+                ?? throw new InvalidDataException("服务端设备注册格式错误");
+            store.State.DeviceToken = result.Token;
+            store.Save();
+            tokenValidated = true;
+            return result.Token;
+        }
+        finally
         {
-            Content = new StringContent(
-                JsonSerializer.Serialize(new { platform = "windows", displayName = Environment.MachineName }),
-                Encoding.UTF8, "application/json"),
-        };
-        using var created = await http.SendAsync(registration, cancellationToken);
-        created.EnsureSuccessStatusCode();
-        await using var stream = await created.Content.ReadAsStreamAsync(cancellationToken);
-        var result = await JsonSerializer.DeserializeAsync<RegistrationResponse>(stream, JsonOptions, cancellationToken)
-            ?? throw new InvalidDataException("服务端设备注册格式错误");
-        store.State.DeviceToken = result.Token;
-        store.Save();
-        return result.Token;
+            authenticationGate.Release();
+        }
+    }
+
+    private async Task EnsureAuthenticationSuccessAsync(HttpResponseMessage response, CancellationToken cancellationToken)
+    {
+        if (response.IsSuccessStatusCode) return;
+        var error = await ResponseErrorAsync(response, cancellationToken);
+        throw new HttpRequestException(error, null, response.StatusCode);
+    }
+
+    private static async Task EnsureSuccessAsync(HttpResponseMessage response, CancellationToken cancellationToken)
+    {
+        if (!response.IsSuccessStatusCode)
+            throw new HttpRequestException(await ResponseErrorAsync(response, cancellationToken), null, response.StatusCode);
+    }
+
+    private static async Task<string> ResponseErrorAsync(HttpResponseMessage response, CancellationToken cancellationToken)
+    {
+        var body = (await response.Content.ReadAsStringAsync(cancellationToken)).Trim();
+        return string.IsNullOrWhiteSpace(body)
+            ? $"服务端返回 {(int)response.StatusCode} ({response.ReasonPhrase})"
+            : $"服务端返回 {(int)response.StatusCode}：{body}";
     }
 
     private sealed record ContractsResponse([property: JsonPropertyName("contracts")] List<Contract> Contracts);

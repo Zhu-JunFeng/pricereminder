@@ -76,8 +76,8 @@ func (s *Store) Migrate(ctx context.Context) error {
 }
 
 func (s *Store) Register(ctx context.Context, platform, displayName string) (Registration, error) {
-	if platform != "ios" && platform != "android" && platform != "macos" {
-		return Registration{}, errors.New("platform must be ios, android, or macos")
+	if platform != "ios" && platform != "android" && platform != "macos" && platform != "windows" {
+		return Registration{}, errors.New("platform must be ios, android, macos, or windows")
 	}
 	raw := make([]byte, 32)
 	if _, err := rand.Read(raw); err != nil {

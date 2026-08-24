@@ -5,11 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
-	"net"
 	"net/http"
 	"sort"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/coder/websocket"
@@ -27,14 +25,13 @@ type Server struct {
 	hub           *stream.Hub
 	allowedOrigin string
 	logger        *slog.Logger
-	registrations *registrationLimiter
 	iosWorker     *iosmonitor.Worker
 }
 
 type deviceContextKey struct{}
 
 func New(dataStore *store.Store, catalog *binance.Catalog, hub *stream.Hub, iosWorker *iosmonitor.Worker, allowedOrigin string, logger *slog.Logger) *Server {
-	return &Server{store: dataStore, catalog: catalog, hub: hub, iosWorker: iosWorker, allowedOrigin: allowedOrigin, logger: logger, registrations: newRegistrationLimiter()}
+	return &Server{store: dataStore, catalog: catalog, hub: hub, iosWorker: iosWorker, allowedOrigin: allowedOrigin, logger: logger}
 }
 
 func (s *Server) Handler() http.Handler {
@@ -66,11 +63,6 @@ func (s *Server) health(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (s *Server) register(w http.ResponseWriter, r *http.Request) {
-	ip, _, _ := net.SplitHostPort(r.RemoteAddr)
-	if !s.registrations.Allow(ip, time.Now()) {
-		writeError(w, http.StatusTooManyRequests, "registration_rate_limited", "注册过于频繁，请稍后再试")
-		return
-	}
 	var request struct{ Platform, DisplayName string }
 	if !decodeJSON(w, r, &request) {
 		return
@@ -283,31 +275,4 @@ func writeJSON(w http.ResponseWriter, status int, payload any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(payload)
-}
-
-type registrationLimiter struct {
-	mu      sync.Mutex
-	windows map[string][]time.Time
-}
-
-func newRegistrationLimiter() *registrationLimiter {
-	return &registrationLimiter{windows: make(map[string][]time.Time)}
-}
-
-func (l *registrationLimiter) Allow(ip string, now time.Time) bool {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	cutoff := now.Add(-time.Hour)
-	items := l.windows[ip][:0]
-	for _, item := range l.windows[ip] {
-		if item.After(cutoff) {
-			items = append(items, item)
-		}
-	}
-	if len(items) >= 5 {
-		l.windows[ip] = items
-		return false
-	}
-	l.windows[ip] = append(items, now)
-	return true
 }
