@@ -321,20 +321,22 @@ final class AppModel: ObservableObject {
                     relayNext.toggle()
                     monitorState = .disconnected
                     statusMessage = relayNext
-                        ? "币安直连失败，5 秒后切换服务端"
+                        ? "币安直连失败，正在切换服务端"
                         : "服务端连接中断，5 秒后重新检测币安"
-                    try? await Task.sleep(for: .seconds(5))
+                    if !relayNext {
+                        try? await Task.sleep(for: .seconds(5))
+                    }
                 }
             }
         }
         watchdogTask?.cancel()
         watchdogTask = Task {
             while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(5))
+                try? await Task.sleep(for: .seconds(1))
                 guard !Task.isCancelled, monitoringEnabled,
                       let reference = lastReceivedAt ?? connectionStartedAt else { continue }
                 let elapsed = Date().timeIntervalSince(reference)
-                if elapsed >= 15, !usingServerRelay {
+                if elapsed >= 3, !usingServerRelay {
                     statusMessage = "币安直连无有效行情，正在切换服务端"
                     await stream.disconnect()
                 } else if elapsed >= 60, !connectionFailureNotified {

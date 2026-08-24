@@ -64,3 +64,15 @@ cd android
 APK 不依赖 GMS/HMS，适用于 Android 10+ 与仍支持 Android APK 的华为设备。
 
 Android Debug 与 Release 优先连接币安公开 HTTPS/WebSocket；直连失败时使用 `BuildConfig.PRICE_REMINDER_SERVER_URL` 指定的服务端。当前部署地址为 `https://keyflow.zcn.world/price-reminder`。
+
+## Windows
+
+Windows 10/11 使用 .NET 8 WinForms。开发机构建：
+
+```powershell
+dotnet run --project windows/PriceReminder.CoreChecks/PriceReminder.CoreChecks.csproj --configuration Release
+dotnet build windows/PriceReminder.Windows.csproj --configuration Release
+dotnet publish windows/PriceReminder.Windows.csproj --configuration Release --runtime win-x64 --self-contained true
+```
+
+GitHub Actions 的 `Windows` 工作流会运行规则核心检查，在真实 Windows 环境构建，并上传 `PriceReminder-Windows-x64.zip`。自包含发布包无需目标电脑预装 .NET。启动后默认监控；关闭窗口只收起到通知区域，右键托盘图标选择“退出”才结束程序。

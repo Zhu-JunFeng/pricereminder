@@ -279,18 +279,21 @@ class PriceMonitorService : Service() {
         ready = false
         connectionSource = if (failedSource == ConnectionSource.DIRECT) ConnectionSource.SERVER else ConnectionSource.DIRECT
         val message = if (failedSource == ConnectionSource.DIRECT) {
-            "币安直连失败，5 秒后切换服务端"
+            "币安直连失败，正在切换服务端"
         } else {
             "服务端连接中断，5 秒后重新检测币安"
         }
         MonitorBus.update { it.copy(connected = false, warmingUp = true, message = "$message：$reason") }
-        reconnectJob = scope.launch { delay(5.seconds); connect() }
+        reconnectJob = scope.launch {
+            if (failedSource == ConnectionSource.SERVER) delay(5.seconds)
+            connect()
+        }
     }
 
     private suspend fun watchdog() {
         var interruptionReported = false
         while (true) {
-            delay(5.seconds)
+            delay(1.seconds)
             refreshRules()
             val desiredSymbols = (activeRules.values.filter { it.enabled }.map { it.symbol } + container.localStore.primarySymbol)
                 .distinct().take(50).toSet()
@@ -313,9 +316,9 @@ class PriceMonitorService : Service() {
                         .mapTo(mutableSetOf()) { it.symbol },
                 )
             }
-            if (connectionSource == ConnectionSource.DIRECT && silentFor >= 15.seconds.inWholeMilliseconds) {
+            if (connectionSource == ConnectionSource.DIRECT && silentFor >= 3.seconds.inWholeMilliseconds) {
                 socket?.cancel()
-                scheduleReconnect(ConnectionSource.DIRECT, "连续 15 秒未收到有效行情")
+                scheduleReconnect(ConnectionSource.DIRECT, "3 秒内未收到有效行情")
                 continue
             }
             if (silentFor >= 60.seconds.inWholeMilliseconds && !interruptionReported) {

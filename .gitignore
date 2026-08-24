@@ -4,6 +4,8 @@
 .gradle/
 **/.kotlin/
 **/build/
+**/bin/
+**/obj/
 **/.build/
 **/DerivedData/
 **/DerivedData*/
