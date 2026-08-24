@@ -1,6 +1,19 @@
 import Foundation
 
 public actor PriceStream {
+    private final class CompletionGate: @unchecked Sendable {
+        private let lock = NSLock()
+        private var completed = false
+
+        func claim() -> Bool {
+            lock.lock()
+            defer { lock.unlock() }
+            guard !completed else { return false }
+            completed = true
+            return true
+        }
+    }
+
     private struct Message: Decodable {
         let eventType: String?
         let eventTime: Int64?
@@ -125,8 +138,10 @@ public actor PriceStream {
     }
 
     private func ping(_ task: URLSessionWebSocketTask) async throws {
+        let gate = CompletionGate()
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             task.sendPing { error in
+                guard gate.claim() else { return }
                 if let error {
                     continuation.resume(throwing: error)
                 } else {
