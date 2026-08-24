@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		14DDFD30820FBC863892A6F3 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 955EDB42615CD4178E7D2725 /* Assets.xcassets */; };
 		21186014C8458EFD8DDEA50C /* RulesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 09D566A30E41195CC939649E /* RulesView.swift */; };
 		316DA64C5D60A96CE9DC4B02 /* KeychainStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9AF183E649513D6146D32EC8 /* KeychainStore.swift */; };
 		38A991A21C14D7CABC1DBB8A /* ServerConnectionService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F1C5C500840148654146744 /* ServerConnectionService.swift */; };
@@ -25,6 +26,7 @@
 		BD3AA50C4E206A8359C56FFD /* LocalPersistence.swift in Sources */ = {isa = PBXBuildFile; fileRef = E36BA06AF075A219870352D8 /* LocalPersistence.swift */; };
 		BF400B4419418921D5ADBEAE /* PriceReminderMacApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 296AA8DF50B1B445C31A0576 /* PriceReminderMacApp.swift */; };
 		C16DA9CF1FF12D8A1461297B /* PriceReminderLiveActivity.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = BEA143AFA717AFA289712A42 /* PriceReminderLiveActivity.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		DFD5807E5DBCB97984704A60 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 955EDB42615CD4178E7D2725 /* Assets.xcassets */; };
 		E2B52650D11841AB1B451D9E /* MarketView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 314D56B0D01632ED36E5BCD6 /* MarketView.swift */; };
 		E74388B933A1D8976F2EA5B7 /* IOSBackgroundService.swift in Sources */ = {isa = PBXBuildFile; fileRef = C194C507DD39B34FF0C339F8 /* IOSBackgroundService.swift */; };
 		E83F5EDB408B10E6A8D1249E /* PriceLiveActivityWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3ED0F0877B080D058763593E /* PriceLiveActivityWidget.swift */; };
@@ -73,6 +75,7 @@
 		756EF9E9CD42F04B114B4726 /* PriceReminderMac.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = PriceReminderMac.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		7FC178CC7C61F0285EB1ADBC /* AppModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModel.swift; sourceTree = "<group>"; };
 		8F1C5C500840148654146744 /* ServerConnectionService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerConnectionService.swift; sourceTree = "<group>"; };
+		955EDB42615CD4178E7D2725 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		9AF183E649513D6146D32EC8 /* KeychainStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainStore.swift; sourceTree = "<group>"; };
 		B3E34B450C0650EF00381106 /* PriceCore */ = {isa = PBXFileReference; lastKnownFileType = folder; name = PriceCore; path = PriceCore; sourceTree = SOURCE_ROOT; };
 		BEA143AFA717AFA289712A42 /* PriceReminderLiveActivity.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = PriceReminderLiveActivity.appex; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -177,6 +180,7 @@
 			children = (
 				7FC178CC7C61F0285EB1ADBC /* AppModel.swift */,
 				35FC36F1F86B793EBF41A437 /* AppTheme.swift */,
+				955EDB42615CD4178E7D2725 /* Assets.xcassets */,
 				9AF183E649513D6146D32EC8 /* KeychainStore.swift */,
 				E806D7F906592F5608CF61FF /* LiveActivityAttributes.swift */,
 				E36BA06AF075A219870352D8 /* LocalPersistence.swift */,
@@ -193,6 +197,7 @@
 			buildConfigurationList = 8FB2C7FCA95040A21E959D49 /* Build configuration list for PBXNativeTarget "PriceReminderiOS" */;
 			buildPhases = (
 				9570E50452B1399E599A0AED /* Sources */,
+				C241BED78828729E09BA9DF7 /* Resources */,
 				AB4C49EF04206C9A90EB1A3F /* Frameworks */,
 				9D36E7A8CA67AC49E30F99C9 /* Embed Foundation Extensions */,
 			);
@@ -231,6 +236,7 @@
 			buildConfigurationList = B9514F11D8B20F514A57A800 /* Build configuration list for PBXNativeTarget "PriceReminderMac" */;
 			buildPhases = (
 				73787435064E2867B1C36422 /* Sources */,
+				90F328333BF5D2602C53725D /* Resources */,
 				2F4ABD6506BCD72715FC44F2 /* Frameworks */,
 			);
 			buildRules = (
@@ -287,6 +293,25 @@
 			);
 		};
 /* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		90F328333BF5D2602C53725D /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				DFD5807E5DBCB97984704A60 /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		C241BED78828729E09BA9DF7 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				14DDFD30820FBC863892A6F3 /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		3ECE8251C0C137623AEC5B00 /* Sources */ = {
