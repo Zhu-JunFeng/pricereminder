@@ -58,25 +58,43 @@ func New(keyID, teamID, privateKeyText, bundleID string) (*Client, error) {
 }
 
 func (c *Client) SendAlert(ctx context.Context, token, environment, eventID string, payload json.RawMessage) error {
+	requestPayload, err := makeAlertPayload(eventID, payload)
+	if err != nil {
+		return err
+	}
+	return c.send(ctx, token, environment, c.bundleID, "alert", "10", requestPayload)
+}
+
+func makeAlertPayload(eventID string, payload json.RawMessage) ([]byte, error) {
 	var event struct {
 		Symbol    string `json:"symbol"`
 		EventTime int64  `json:"eventTime"`
 		Triggers  []struct {
+			Kind          string `json:"kind"`
 			Direction     string `json:"direction"`
 			ChangePct     string `json:"changePct"`
 			ThresholdPct  string `json:"thresholdPct"`
 			WindowMinutes int    `json:"windowMinutes"`
+			TargetPrice   string `json:"targetPrice"`
 			Price         string `json:"price"`
 		} `json:"triggers"`
 	}
 	if err := json.Unmarshal(payload, &event); err != nil {
-		return err
+		return nil, err
 	}
 	if len(event.Triggers) == 0 {
-		return errors.New("iOS event has no triggers")
+		return nil, errors.New("iOS event has no triggers")
 	}
 	parts := make([]string, 0, len(event.Triggers))
 	for _, trigger := range event.Triggers {
+		if trigger.Kind == "target" {
+			direction := "达到或高于"
+			if trigger.Direction == "fall" {
+				direction = "达到或低于"
+			}
+			parts = append(parts, fmt.Sprintf("%s目标价 %s", direction, trigger.TargetPrice))
+			continue
+		}
 		direction := "上涨"
 		if trigger.Direction == "fall" {
 			direction = "下跌"
@@ -84,14 +102,13 @@ func (c *Client) SendAlert(ctx context.Context, token, environment, eventID stri
 		parts = append(parts, fmt.Sprintf("%d分钟%s %s%%（阈值 %s%%）", trigger.WindowMinutes, direction, trigger.ChangePct, trigger.ThresholdPct))
 	}
 	body := strings.Join(parts, "；") + " · 最新价 " + event.Triggers[0].Price
-	requestPayload, _ := json.Marshal(map[string]any{
+	return json.Marshal(map[string]any{
 		"aps": map[string]any{
 			"alert": map[string]string{"title": event.Symbol + " 价格预警", "body": body},
 			"sound": "default",
 		},
 		"eventId": eventID,
 	})
-	return c.send(ctx, token, environment, c.bundleID, "alert", "10", requestPayload)
 }
 
 func (c *Client) SendLiveActivity(ctx context.Context, token, environment, symbol, price string, eventTime int64) error {

@@ -29,6 +29,31 @@ func TestValidateSnapshotNormalizesAndRejectsDuplicates(t *testing.T) {
 	}
 }
 
+func TestValidateTargetSnapshotNormalizesAndRejectsDuplicates(t *testing.T) {
+	snapshot, err := ValidateSnapshot(Snapshot{
+		Version: 2, MonitoringEnabled: true,
+		Rules: []Rule{{
+			ID: uuid.NewString(), Symbol: " btcusdt ", Kind: rules.Target,
+			TargetDirection: rules.Above, TargetPriceText: "105.00", IsEnabled: true,
+		}},
+	}, func(symbol string) bool { return symbol == "BTCUSDT" })
+	if err != nil {
+		t.Fatal(err)
+	}
+	item := snapshot.Rules[0]
+	if item.Kind != rules.Target || item.Symbol != "BTCUSDT" || item.TargetPriceText != "105" || item.TargetDirection != rules.Above {
+		t.Fatalf("target snapshot was not normalized: %#v", item)
+	}
+
+	snapshot.Rules = append(snapshot.Rules, Rule{
+		ID: uuid.NewString(), Symbol: "BTCUSDT", Kind: rules.Target,
+		TargetDirection: rules.Above, TargetPriceText: "105.0", IsEnabled: true,
+	})
+	if _, err := ValidateSnapshot(snapshot, func(string) bool { return true }); err == nil {
+		t.Fatal("duplicate target rule should be rejected")
+	}
+}
+
 func TestEventIDIsDeterministicAcrossTriggerOrder(t *testing.T) {
 	deviceID := uuid.New()
 	point, err := domain.NewPricePoint("BTCUSDT", "105", 60_000)

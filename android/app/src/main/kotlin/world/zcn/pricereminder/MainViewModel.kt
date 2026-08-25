@@ -10,6 +10,8 @@ import kotlinx.coroutines.launch
 import world.zcn.pricereminder.data.ContractDto
 import world.zcn.pricereminder.data.StoredRule
 import world.zcn.pricereminder.data.TriggerHistory
+import world.zcn.pricereminder.monitor.MonitorBus
+import world.zcn.pricereminder.monitor.NotificationCoordinator
 import java.util.UUID
 
 data class AppUiState(
@@ -19,6 +21,7 @@ data class AppUiState(
     val primarySymbol: String = "BTCUSDT",
     val loading: Boolean = true,
     val error: String? = null,
+    val selfCheckMessage: String? = null,
 )
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
@@ -55,7 +58,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (value < "0.1".toBigDecimal() || value > "100".toBigDecimal()) return "变化阈值必须在 0.1% 到 100% 之间"
         val current = mutableState.value.rules
         if (current.size >= 50) return "每台设备最多 50 条规则"
-        if (current.any { it.symbol == symbol && it.windowMinutes == window && it.thresholdText.toBigDecimalOrNull() == value }) {
+        if (current.any { it.kind == "percentage" && it.symbol == symbol && it.windowMinutes == window && it.thresholdText.toBigDecimalOrNull() == value }) {
             return "相同合约、窗口和阈值的规则已存在"
         }
         val updated = current + StoredRule(UUID.randomUUID().toString(), symbol, window, normalized)
@@ -63,14 +66,49 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         return null
     }
 
+    fun addTargetRule(symbol: String, direction: String, targetPrice: String): String? {
+        val normalized = targetPrice.trim()
+        val value = normalized.toBigDecimalOrNull() ?: return "请输入有效目标价格"
+        if (value <= java.math.BigDecimal.ZERO) return "目标价格必须大于 0"
+        val current = mutableState.value.rules
+        if (current.size >= 50) return "每台设备最多 50 条规则"
+        if (current.any {
+                it.kind == "target" && it.symbol == symbol && it.targetDirection == direction &&
+                    it.targetPriceText?.toBigDecimalOrNull() == value
+            }) return "相同合约、方向和目标价格的规则已存在"
+        val updated = current + StoredRule(
+            id = UUID.randomUUID().toString(), symbol = symbol, windowMinutes = 0,
+            thresholdText = "0", kind = "target", targetDirection = direction,
+            targetPriceText = normalized,
+        )
+        saveRules(updated)
+        return null
+    }
+
     fun toggleRule(id: String, enabled: Boolean) {
-        saveRules(mutableState.value.rules.map { if (it.id == id) it.copy(enabled = enabled, riseTriggered = false, fallTriggered = false) else it })
+        saveRules(mutableState.value.rules.map {
+            if (it.id == id) it.copy(enabled = enabled, riseTriggered = false, fallTriggered = false, targetTriggered = false) else it
+        })
     }
 
     fun deleteRule(id: String) { saveRules(mutableState.value.rules.filterNot { it.id == id }) }
 
     fun markNotificationPermissionUnavailable() {
         mutableState.value = mutableState.value.copy(error = "系统通知未开启；实时价格和本地规则计算仍会继续")
+    }
+
+    fun refreshSelfCheck() {
+        val application = getApplication<Application>()
+        val enabled = NotificationCoordinator(application).notificationsEnabled()
+        MonitorBus.update { it.copy(notificationsEnabled = enabled) }
+        mutableState.value = mutableState.value.copy(selfCheckMessage = "状态已刷新")
+    }
+
+    fun sendTestNotification() {
+        val sent = NotificationCoordinator(getApplication()).test()
+        mutableState.value = mutableState.value.copy(
+            selfCheckMessage = if (sent) "测试通知已发送" else "通知权限未开启，请前往系统设置允许通知"
+        )
     }
 
     private fun saveRules(rules: List<StoredRule>) {

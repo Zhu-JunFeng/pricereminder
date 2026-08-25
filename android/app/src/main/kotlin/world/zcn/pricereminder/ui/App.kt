@@ -86,7 +86,7 @@ fun PriceReminderApp(viewModel: MainViewModel, onStartMonitor: () -> Unit, onSto
             when (tab) {
                 0 -> MarketScreen(state, monitor, viewModel::selectPrimary, onStartMonitor, onStopMonitor)
                 1 -> RulesScreen(state, viewModel)
-                else -> SettingsScreen(state, monitor.message)
+                else -> SettingsScreen(state, monitor, viewModel)
             }
         }
     }
@@ -155,7 +155,7 @@ private fun RulesScreen(state: AppUiState, viewModel: MainViewModel) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 Column {
                     Text("价格预警", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.SemiBold)
-                    Text("滚动窗口双向提醒 · ${state.rules.size}/50", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("涨跌幅与目标价格 · ${state.rules.size}/50", color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 Button(onClick = { adding = !adding }, shape = RoundedCornerShape(8.dp)) {
                     Icon(Icons.Outlined.AddAlert, contentDescription = null)
@@ -163,19 +163,27 @@ private fun RulesScreen(state: AppUiState, viewModel: MainViewModel) {
                     Text(if (adding) "收起" else "添加")
                 }
             }
-            if (adding) AddRuleForm(state.contracts, state.primarySymbol) { symbol, window, threshold ->
-                viewModel.addRule(symbol, window, threshold)
-            }
+            if (adding) AddRuleForm(
+                contracts = state.contracts,
+                initialSymbol = state.primarySymbol,
+                onSavePercentage = viewModel::addRule,
+                onSaveTarget = viewModel::addTargetRule,
+            )
             Spacer(Modifier.height(18.dp))
         }
         if (state.rules.isEmpty()) {
-            item { EmptyMessage("还没有预警规则", "添加一条规则后，监控服务会开始积累完整时间窗口。") }
+            item { EmptyMessage("还没有预警规则", "可添加涨跌幅提醒或目标价格提醒。") }
         }
         items(state.rules, key = { it.id }) { rule ->
             Row(Modifier.fillMaxWidth().padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
                     Text(rule.symbol, fontWeight = FontWeight.SemiBold)
-                    Text("${rule.windowMinutes} 分钟内上涨或下跌 ≥ ${rule.thresholdText}%", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(
+                        if (rule.kind == "target") {
+                            "${if (rule.targetDirection == "above") "达到或高于" else "达到或低于"} ${rule.targetPriceText ?: "--"}"
+                        } else "${rule.windowMinutes} 分钟内上涨或下跌 ≥ ${rule.thresholdText}%",
+                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
                 Switch(checked = rule.enabled, onCheckedChange = { viewModel.toggleRule(rule.id, it) })
                 IconButton(onClick = { viewModel.deleteRule(rule.id) }) { Icon(Icons.Outlined.Delete, contentDescription = "删除规则") }
@@ -194,8 +202,13 @@ private fun RulesScreen(state: AppUiState, viewModel: MainViewModel) {
                 Text(if (rise) "↑" else "↓", color = if (rise) RiseColor else FallColor, style = MaterialTheme.typography.titleLarge)
                 Spacer(Modifier.width(10.dp))
                 Column(Modifier.weight(1f)) {
-                    Text("${event.symbol} · ${event.windowMinutes}分钟", fontWeight = FontWeight.Medium)
-                    Text("${event.changePercent.toBigDecimalOrNull()?.setScale(2, RoundingMode.HALF_UP)}% · ${event.priceText}", style = MaterialTheme.typography.bodySmall)
+                    Text(if (event.kind == "target") "${event.symbol} · 目标价" else "${event.symbol} · ${event.windowMinutes}分钟", fontWeight = FontWeight.Medium)
+                    Text(
+                        if (event.kind == "target") {
+                            "${if (rise) "达到或高于" else "达到或低于"} ${event.targetPriceText ?: "--"} · ${event.priceText}"
+                        } else "${event.changePercent?.toBigDecimalOrNull()?.setScale(2, RoundingMode.HALF_UP)}% · ${event.priceText}",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
                 }
                 Text(DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(event.eventTime)), style = MaterialTheme.typography.labelSmall)
             }
@@ -204,21 +217,48 @@ private fun RulesScreen(state: AppUiState, viewModel: MainViewModel) {
 }
 
 @Composable
-private fun AddRuleForm(contracts: List<ContractDto>, initialSymbol: String, onSave: (String, Int, String) -> String?) {
+private fun AddRuleForm(
+    contracts: List<ContractDto>,
+    initialSymbol: String,
+    onSavePercentage: (String, Int, String) -> String?,
+    onSaveTarget: (String, String, String) -> String?,
+) {
     var symbol by remember { mutableStateOf(initialSymbol) }
+    var kind by remember { mutableStateOf("percentage") }
     var window by remember { mutableStateOf("5") }
     var threshold by remember { mutableStateOf("3") }
+    var targetDirection by remember { mutableStateOf("above") }
+    var targetPrice by remember { mutableStateOf("") }
     var error by remember { mutableStateOf<String?>(null) }
     Column(Modifier.fillMaxWidth().padding(top = 18.dp, bottom = 6.dp)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            TextButton(onClick = { kind = "percentage" }) { Text(if (kind == "percentage") "✓ 涨跌幅" else "涨跌幅") }
+            TextButton(onClick = { kind = "target" }) { Text(if (kind == "target") "✓ 目标价格" else "目标价格") }
+        }
         ContractPicker(contracts, symbol, "U本位永续合约") { symbol = it }
         Spacer(Modifier.height(10.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            OutlinedTextField(window, { window = it.filter(Char::isDigit) }, label = { Text("分钟") }, modifier = Modifier.weight(1f), singleLine = true, shape = RoundedCornerShape(8.dp))
-            OutlinedTextField(threshold, { threshold = it.filter { char -> char.isDigit() || char == '.' } }, label = { Text("变化 %") }, modifier = Modifier.weight(1f), singleLine = true, shape = RoundedCornerShape(8.dp))
+        if (kind == "percentage") {
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                OutlinedTextField(window, { window = it.filter(Char::isDigit) }, label = { Text("分钟") }, modifier = Modifier.weight(1f), singleLine = true, shape = RoundedCornerShape(8.dp))
+                OutlinedTextField(threshold, { threshold = it.filter { char -> char.isDigit() || char == '.' } }, label = { Text("变化 %") }, modifier = Modifier.weight(1f), singleLine = true, shape = RoundedCornerShape(8.dp))
+            }
+        } else {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                TextButton(onClick = { targetDirection = "above" }) { Text(if (targetDirection == "above") "✓ 达到或高于" else "达到或高于") }
+                TextButton(onClick = { targetDirection = "below" }) { Text(if (targetDirection == "below") "✓ 达到或低于" else "达到或低于") }
+            }
+            OutlinedTextField(
+                targetPrice, { targetPrice = it.filter { char -> char.isDigit() || char == '.' } },
+                label = { Text("目标价格") }, modifier = Modifier.fillMaxWidth(), singleLine = true,
+                shape = RoundedCornerShape(8.dp),
+            )
         }
         error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 6.dp)) }
         Button(
-            onClick = { error = onSave(symbol, window.toIntOrNull() ?: 0, threshold) },
+            onClick = {
+                error = if (kind == "percentage") onSavePercentage(symbol, window.toIntOrNull() ?: 0, threshold)
+                else onSaveTarget(symbol, targetDirection, targetPrice)
+            },
             modifier = Modifier.fillMaxWidth().padding(top = 12.dp), shape = RoundedCornerShape(8.dp),
         ) { Text("保存预警") }
     }
@@ -259,7 +299,11 @@ private fun ContractPicker(contracts: List<ContractDto>, selected: String, label
 }
 
 @Composable
-private fun SettingsScreen(state: AppUiState, monitorMessage: String) {
+private fun SettingsScreen(
+    state: AppUiState,
+    monitor: world.zcn.pricereminder.monitor.MonitorSnapshot,
+    viewModel: MainViewModel,
+) {
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp)) {
         Text("设置", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.SemiBold)
         Spacer(Modifier.height(22.dp))
@@ -267,10 +311,32 @@ private fun SettingsScreen(state: AppUiState, monitorMessage: String) {
         SettingRow("价格保留", "本机与服务器均为最近 1 小时")
         SettingRow("系统展示", "常驻通知最多每 15 秒刷新")
         SettingRow("设备身份", "匿名设备令牌 · 连续 30 天未使用过期")
-        SettingRow("当前状态", monitorMessage)
+        SettingRow("当前状态", monitor.message)
+        SettingRow("连接路径", monitor.source)
+        SettingRow("订阅合约", "${monitor.subscribedCount} 个")
+        SettingRow("行情延迟", latestDelayText(monitor))
+        SettingRow("最后接收", monitor.lastReceivedAt?.let { DateFormat.getTimeInstance(DateFormat.MEDIUM).format(Date(it)) } ?: "尚未收到")
+        SettingRow("重连次数", monitor.reconnectCount.toString())
+        SettingRow("通知权限", if (monitor.notificationsEnabled) "已允许" else "未允许")
+        monitor.lastError?.let { SettingRow("最近错误", it) }
+        Spacer(Modifier.height(18.dp))
+        Text("连接自检", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(onClick = viewModel::refreshSelfCheck, shape = RoundedCornerShape(8.dp)) { Text("刷新状态") }
+            TextButton(onClick = viewModel::sendTestNotification) { Text("发送测试通知") }
+        }
+        state.selfCheckMessage?.let {
+            Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
         Spacer(Modifier.height(18.dp))
         Text("规则和触发历史只保存在此设备。卸载重装会被视为新设备，无法恢复旧配置。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
+}
+
+private fun latestDelayText(monitor: world.zcn.pricereminder.monitor.MonitorSnapshot): String {
+    val latest = monitor.prices.values.maxOfOrNull { it.eventTime } ?: return "尚未收到行情"
+    val delay = (System.currentTimeMillis() - latest).coerceAtLeast(0)
+    return if (delay < 1_000) "< 1 秒" else "%.1f 秒".format(delay / 1_000.0)
 }
 
 @Composable

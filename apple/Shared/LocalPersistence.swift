@@ -5,11 +5,49 @@ struct TriggerRecord: Codable, Identifiable, Hashable {
     let id: String
     let symbol: String
     let direction: TriggerDirection
-    let changePercent: Decimal
+    let kind: AlertRuleKind
+    let changePercent: Decimal?
     let windowMinutes: Int
     let thresholdText: String
+    let targetPriceText: String?
     let priceText: String
     let eventTime: Int64
+
+    init(
+        id: String, symbol: String, kind: AlertRuleKind, direction: TriggerDirection,
+        changePercent: Decimal?, windowMinutes: Int, thresholdText: String,
+        targetPriceText: String?, priceText: String, eventTime: Int64
+    ) {
+        self.id = id
+        self.symbol = symbol
+        self.kind = kind
+        self.direction = direction
+        self.changePercent = changePercent
+        self.windowMinutes = windowMinutes
+        self.thresholdText = thresholdText
+        self.targetPriceText = targetPriceText
+        self.priceText = priceText
+        self.eventTime = eventTime
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, symbol, kind, direction, changePercent, windowMinutes, thresholdText
+        case targetPriceText, priceText, eventTime
+    }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        id = try values.decode(String.self, forKey: .id)
+        symbol = try values.decode(String.self, forKey: .symbol)
+        kind = try values.decodeIfPresent(AlertRuleKind.self, forKey: .kind) ?? .percentage
+        direction = try values.decode(TriggerDirection.self, forKey: .direction)
+        changePercent = try values.decodeIfPresent(Decimal.self, forKey: .changePercent)
+        windowMinutes = try values.decodeIfPresent(Int.self, forKey: .windowMinutes) ?? 0
+        thresholdText = try values.decodeIfPresent(String.self, forKey: .thresholdText) ?? ""
+        targetPriceText = try values.decodeIfPresent(String.self, forKey: .targetPriceText)
+        priceText = try values.decode(String.self, forKey: .priceText)
+        eventTime = try values.decode(Int64.self, forKey: .eventTime)
+    }
 }
 
 enum LocalPersistence {

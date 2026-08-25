@@ -21,6 +21,10 @@ internal sealed class MonitorService : IDisposable
     private string message = "监控未启动";
     private bool connected;
     private bool warmingUp;
+    private DateTimeOffset? lastReceivedAt;
+    private int reconnectCount;
+    private string? lastError;
+    private int subscribedCount;
 
     public event Action<MonitorSnapshot>? StateChanged;
     public event Action<IReadOnlyList<AlertTrigger>>? Triggered;
@@ -64,13 +68,21 @@ internal sealed class MonitorService : IDisposable
 
     public void SubscriptionsChanged() => connectionCancellation?.Cancel();
 
+    public void InitializeRule(AlertRule rule)
+    {
+        if (rule.Kind != AlertRuleKind.Target) return;
+        var current = buffer.Latest(rule.Symbol);
+        if (current is not null) RuleEngine.Initialize(rule, current, buffer);
+    }
+
     public MonitorSnapshot Snapshot()
     {
         lock (gate)
         {
             return new MonitorSnapshot(Running, connected, warmingUp, source, message,
                 new Dictionary<string, PricePoint>(latestPrices, StringComparer.OrdinalIgnoreCase),
-                new HashSet<string>(staleSymbols, StringComparer.OrdinalIgnoreCase));
+                new HashSet<string>(staleSymbols, StringComparer.OrdinalIgnoreCase),
+                lastReceivedAt, reconnectCount, lastError, subscribedCount);
         }
     }
 
@@ -83,6 +95,7 @@ internal sealed class MonitorService : IDisposable
             try
             {
                 var symbols = DesiredSymbols();
+                lock (gate) subscribedCount = symbols.Count;
                 if (source == ConnectionSource.Direct)
                 {
                     SetStatus(false, true, "正在直连币安");
@@ -104,6 +117,11 @@ internal sealed class MonitorService : IDisposable
             }
             catch (Exception error)
             {
+                lock (gate)
+                {
+                    reconnectCount++;
+                    lastError = ShortError(error);
+                }
                 SetStatus(false, true, source == ConnectionSource.Direct
                     ? $"币安直连失败，正在切换服务端：{ShortError(error)}"
                     : $"服务端连接中断，5 秒后重新检测币安：{ShortError(error)}");
@@ -149,6 +167,11 @@ internal sealed class MonitorService : IDisposable
             var point = ApiClient.DecodeDirectPrice(json);
             if (point is null) return;
             lastValidPriceAt = DateTimeOffset.UtcNow;
+            lock (gate)
+            {
+                lastReceivedAt = lastValidPriceAt;
+                lastError = null;
+            }
             pendingPrices[point.Symbol] = point;
         }, cancellationToken);
 
@@ -175,6 +198,11 @@ internal sealed class MonitorService : IDisposable
                 case "ready": SetStatus(true, IsWarmingUp(), "服务端币安行情 · 实时监控中"); break;
                 case "status": SetStatus(true, true, "服务端币安行情 · 正在补齐价格"); break;
                 case "price" when envelope.Symbol is not null && envelope.Price is not null && envelope.EventTime is not null:
+                    lock (gate)
+                    {
+                        lastReceivedAt = DateTimeOffset.UtcNow;
+                        lastError = null;
+                    }
                     pendingPrices[envelope.Symbol] = new PricePoint(
                         envelope.Symbol, envelope.Price, envelope.EventTime.Value, envelope.Replay);
                     break;
@@ -236,8 +264,8 @@ internal sealed class MonitorService : IDisposable
             {
                 store.State.History.Insert(0, new TriggerHistory(
                     $"{trigger.RuleId}:{trigger.Direction}:{trigger.EventTime}", trigger.Symbol,
-                    trigger.Direction, trigger.ChangePercent, trigger.WindowMinutes,
-                    trigger.ThresholdText, trigger.PriceText, trigger.EventTime));
+                    trigger.Kind, trigger.Direction, trigger.ChangePercent, trigger.WindowMinutes,
+                    trigger.ThresholdText, trigger.TargetPriceText, trigger.PriceText, trigger.EventTime));
             }
             store.Save();
         }
@@ -257,7 +285,8 @@ internal sealed class MonitorService : IDisposable
     private bool IsWarmingUp()
     {
         lock (store.State)
-            return store.State.Rules.Any(rule => rule.Enabled && !buffer.Covers(rule.Symbol, rule.WindowMinutes * 60_000L));
+            return store.State.Rules.Any(rule => rule.Enabled && rule.Kind == AlertRuleKind.Percentage &&
+                !buffer.Covers(rule.Symbol, rule.WindowMinutes * 60_000L));
     }
 
     private void UpdateStaleSymbols()

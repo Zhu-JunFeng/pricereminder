@@ -5,10 +5,14 @@ namespace PriceReminder.Windows;
 internal sealed class MainForm : Form
 {
     private static readonly Color Primary = Color.FromArgb(0, 127, 136);
+    private static readonly Color PrimaryHover = Color.FromArgb(0, 108, 116);
+    private static readonly Color PrimarySoft = Color.FromArgb(227, 244, 245);
     private static readonly Color Ink = Color.FromArgb(23, 42, 46);
     private static readonly Color Muted = Color.FromArgb(82, 103, 107);
     private static readonly Color Surface = Color.FromArgb(244, 248, 248);
     private static readonly Color Divider = Color.FromArgb(213, 222, 223);
+    private static readonly Color Warning = Color.FromArgb(153, 88, 17);
+    private static readonly Color WarningSoft = Color.FromArgb(255, 244, 224);
     private readonly LocalStore store;
     private readonly MonitorService monitor;
     private readonly Label statusLabel = new();
@@ -21,13 +25,23 @@ internal sealed class MainForm : Form
     private readonly ComboBox ruleSymbol = new();
     private readonly NumericUpDown ruleWindow = new();
     private readonly NumericUpDown ruleThreshold = new();
+    private readonly NumericUpDown targetPrice = new();
+    private readonly ComboBox ruleKind = new();
+    private readonly ComboBox targetDirection = new();
     private readonly ListView rulesList = new();
     private readonly ListView historyList = new();
     private readonly CheckedListBox traySymbols = new();
     private readonly Label contractsError = new();
     private readonly CheckBox startupCheck = new();
+    private readonly Label diagnosticsLabel = new();
+    private Panel? ruleWindowField;
+    private Panel? ruleThresholdField;
+    private Panel? targetDirectionField;
+    private Panel? targetPriceField;
     private IReadOnlyList<Contract> contracts = [];
     private bool updatingTraySymbols;
+
+    public event Action? TestNotificationRequested;
 
     public MainForm(LocalStore store, MonitorService monitor)
     {
@@ -36,12 +50,21 @@ internal sealed class MainForm : Form
         Text = "币价提醒";
         Icon = BrandIcon.Create();
         StartPosition = FormStartPosition.CenterScreen;
-        MinimumSize = new Size(720, 560);
-        Size = new Size(780, 640);
-        BackColor = Color.White;
-        Font = new Font("Segoe UI", 10);
+        MinimumSize = new Size(840, 620);
+        Size = new Size(940, 700);
+        BackColor = Surface;
+        Font = new Font("Segoe UI Variable Text", 10);
+        DoubleBuffered = true;
 
-        var tabs = new TabControl { Dock = DockStyle.Fill, Padding = new Point(14, 7) };
+        var tabs = new TabControl
+        {
+            Dock = DockStyle.Fill,
+            DrawMode = TabDrawMode.OwnerDrawFixed,
+            ItemSize = new Size(132, 42),
+            SizeMode = TabSizeMode.Fixed,
+            Padding = new Point(18, 8),
+        };
+        tabs.DrawItem += (_, eventArgs) => DrawTab(tabs, eventArgs);
         tabs.TabPages.Add(CreateMarketPage());
         tabs.TabPages.Add(CreateRulesPage());
         tabs.TabPages.Add(CreateSettingsPage());
@@ -71,7 +94,8 @@ internal sealed class MainForm : Form
     {
         statusLabel.Text = snapshot.Message;
         sourceLabel.Text = snapshot.Source == ConnectionSource.Direct ? "终端直连" : "服务端中继";
-        sourceLabel.ForeColor = snapshot.Connected ? Primary : Color.FromArgb(173, 104, 24);
+        sourceLabel.ForeColor = snapshot.Connected ? Primary : Warning;
+        sourceLabel.BackColor = snapshot.Connected ? PrimarySoft : WarningSoft;
         monitorButton.Text = snapshot.Running ? "停止监控" : "开始监控";
         var symbol = store.State.PrimarySymbol;
         symbolLabel.Text = symbol;
@@ -87,6 +111,14 @@ internal sealed class MainForm : Form
             priceLabel.Text = "--";
             updatedLabel.Text = "等待第一条价格";
         }
+        var lastReceived = snapshot.LastReceivedAt?.ToLocalTime().ToString("HH:mm:ss", CultureInfo.InvariantCulture) ?? "尚未收到";
+        var latestEvent = snapshot.Prices.Values.Select(item => item.EventTime).DefaultIfEmpty(0).Max();
+        var delay = latestEvent == 0 ? "尚未收到行情" : $"{Math.Max(0, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - latestEvent) / 1000.0:F1} 秒";
+        diagnosticsLabel.Text =
+            $"连接路径：{(snapshot.Source == ConnectionSource.Direct ? "终端直连" : "服务端中继")}\r\n" +
+            $"订阅合约：{snapshot.SubscribedCount} 个\r\n行情延迟：{delay}\r\n最后接收：{lastReceived}\r\n" +
+            $"重连次数：{snapshot.ReconnectCount}" +
+            (string.IsNullOrWhiteSpace(snapshot.LastError) ? "" : $"\r\n最近错误：{snapshot.LastError}");
     }
 
     public void RefreshHistory()
@@ -95,9 +127,13 @@ internal sealed class MainForm : Form
         historyList.Items.Clear();
         foreach (var item in store.State.History.Take(100))
         {
-            var direction = item.Direction == TriggerDirection.Rise ? "↑ 上涨" : "↓ 下跌";
+            var direction = item.Kind == AlertRuleKind.Target
+                ? (item.Direction == TriggerDirection.Rise ? "↑ 达到或高于" : "↓ 达到或低于")
+                : (item.Direction == TriggerDirection.Rise ? "↑ 上涨" : "↓ 下跌");
             historyList.Items.Add(new ListViewItem(new[] {
-                item.Symbol, direction, $"{item.ChangePercent:F2}%", item.PriceText,
+                item.Symbol, direction,
+                item.Kind == AlertRuleKind.Target ? item.TargetPriceText ?? "--" : $"{(item.ChangePercent ?? 0):F2}%",
+                item.PriceText,
                 DateTimeOffset.FromUnixTimeMilliseconds(item.EventTime).ToLocalTime().ToString("MM-dd HH:mm", CultureInfo.InvariantCulture),
             }));
         }
@@ -131,15 +167,19 @@ internal sealed class MainForm : Form
         primarySymbol.SelectedIndexChanged += (_, _) => SelectPrimary();
         primarySymbol.KeyDown += (_, eventArgs) => { if (eventArgs.KeyCode == Keys.Enter) SelectPrimary(); };
         layout.Controls.Add(primarySymbol, 0, 1);
-        sourceLabel.AutoSize = true;
+        sourceLabel.AutoSize = false;
+        sourceLabel.Size = new Size(90, 28);
         sourceLabel.Anchor = AnchorStyles.Right;
         sourceLabel.Font = new Font("Segoe UI", 9, FontStyle.Bold);
+        sourceLabel.TextAlign = ContentAlignment.MiddleCenter;
+        sourceLabel.BackColor = PrimarySoft;
+        sourceLabel.ForeColor = Primary;
         layout.Controls.Add(sourceLabel, 1, 1);
         symbolLabel.AutoSize = true;
         symbolLabel.ForeColor = Muted;
         layout.Controls.Add(symbolLabel, 0, 2);
         priceLabel.AutoSize = true;
-        priceLabel.Font = new Font("Cascadia Mono", 30, FontStyle.Bold);
+        priceLabel.Font = new Font("Cascadia Mono", 32, FontStyle.Bold);
         priceLabel.ForeColor = Ink;
         priceLabel.Margin = new Padding(0, 3, 0, 0);
         layout.Controls.Add(priceLabel, 0, 3);
@@ -155,13 +195,22 @@ internal sealed class MainForm : Form
         statusLabel.AutoSize = true;
         statusLabel.ForeColor = Ink;
         statusLabel.Font = new Font("Segoe UI", 10, FontStyle.Bold);
-        layout.Controls.Add(statusLabel, 0, 6);
         monitorButton.Text = "停止监控";
         monitorButton.AutoSize = true;
         monitorButton.Anchor = AnchorStyles.Right;
         StylePrimaryButton(monitorButton);
         monitorButton.Click += (_, _) => { if (monitor.Running) monitor.Stop(); else monitor.Start(); };
-        layout.Controls.Add(monitorButton, 1, 6);
+        var statusSurface = new TableLayoutPanel
+        {
+            Dock = DockStyle.Top, AutoSize = true, BackColor = Surface,
+            Padding = new Padding(16, 13, 12, 13), ColumnCount = 2,
+        };
+        statusSurface.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        statusSurface.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        statusSurface.Controls.Add(statusLabel, 0, 0);
+        statusSurface.Controls.Add(monitorButton, 1, 0);
+        layout.Controls.Add(statusSurface, 0, 6);
+        layout.SetColumnSpan(statusSurface, 2);
         contractsError.AutoSize = true;
         contractsError.ForeColor = Color.FromArgb(198, 62, 62);
         contractsError.Visible = false;
@@ -185,38 +234,55 @@ internal sealed class MainForm : Form
         layout.RowStyles.Add(new RowStyle(SizeType.Percent, 45));
         layout.Controls.Add(TextLabel("价格预警", 20, FontStyle.Bold), 0, 0);
 
-        var addRow = new FlowLayoutPanel { Dock = DockStyle.Fill, AutoSize = true, Padding = new Padding(0, 14, 0, 12), WrapContents = false };
+        var addRow = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Fill, AutoSize = true, BackColor = Surface,
+            Padding = new Padding(14, 12, 14, 8), Margin = new Padding(0, 14, 0, 14),
+            WrapContents = false,
+        };
         ruleSymbol.Width = 180;
         ruleSymbol.DropDownStyle = ComboBoxStyle.DropDown;
         ruleWindow.Minimum = 1; ruleWindow.Maximum = 60; ruleWindow.Value = 5; ruleWindow.Width = 72;
         ruleThreshold.Minimum = .1m; ruleThreshold.Maximum = 100; ruleThreshold.DecimalPlaces = 1; ruleThreshold.Increment = .1m; ruleThreshold.Value = 3; ruleThreshold.Width = 82;
+        targetPrice.Minimum = .00000001m; targetPrice.Maximum = 1000000000; targetPrice.DecimalPlaces = 8; targetPrice.Increment = 1; targetPrice.Width = 118;
+        ruleKind.DropDownStyle = ComboBoxStyle.DropDownList;
+        ruleKind.Items.AddRange(["涨跌幅", "目标价格"]);
+        ruleKind.SelectedIndex = 0;
+        ruleKind.Width = 92;
+        targetDirection.DropDownStyle = ComboBoxStyle.DropDownList;
+        targetDirection.Items.AddRange(["达到或高于", "达到或低于"]);
+        targetDirection.SelectedIndex = 0;
+        targetDirection.Width = 112;
         var addButton = new Button { Text = "添加规则", AutoSize = true };
         StylePrimaryButton(addButton);
         addButton.Click += (_, _) => AddRule();
+        ruleWindowField = Field("分钟", ruleWindow);
+        ruleThresholdField = Field("变化 %", ruleThreshold);
+        targetDirectionField = Field("条件", targetDirection);
+        targetPriceField = Field("目标价格", targetPrice);
         addRow.Controls.AddRange(new Control[] {
-            Field("合约", ruleSymbol), Field("分钟", ruleWindow), Field("变化 %", ruleThreshold), addButton,
+            Field("类型", ruleKind), Field("合约", ruleSymbol), ruleWindowField, ruleThresholdField,
+            targetDirectionField, targetPriceField, addButton,
         });
+        ruleKind.SelectedIndexChanged += (_, _) => UpdateRuleFields();
+        UpdateRuleFields();
         layout.Controls.Add(addRow, 0, 1);
 
-        ConfigureList(rulesList, ["合约", "规则", "状态"], [130, 350, 90]);
+        ConfigureList(rulesList, ["合约", "规则", "状态"], [145, 520, 100]);
         rulesList.DoubleClick += (_, _) => ToggleSelectedRule();
         rulesList.KeyDown += (_, eventArgs) =>
         {
             if (eventArgs.KeyCode == Keys.Delete) DeleteSelectedRule();
             if (eventArgs.KeyCode == Keys.Space) ToggleSelectedRule();
         };
-        var rulesPanel = new Panel { Dock = DockStyle.Fill };
-        rulesPanel.Controls.Add(rulesList);
         var rulesMenu = new ContextMenuStrip();
         rulesMenu.Items.Add("启用 / 暂停", null, (_, _) => ToggleSelectedRule());
         rulesMenu.Items.Add("删除", null, (_, _) => DeleteSelectedRule());
         rulesList.ContextMenuStrip = rulesMenu;
-        layout.Controls.Add(rulesPanel, 0, 2);
+        layout.Controls.Add(ListSection("已配置规则", rulesList), 0, 2);
 
-        var historyPanel = new Panel { Dock = DockStyle.Fill, Padding = new Padding(0, 18, 0, 0) };
-        ConfigureList(historyList, ["合约", "方向", "变化", "价格", "时间"], [115, 85, 90, 150, 120]);
-        historyPanel.Controls.Add(historyList);
-        layout.Controls.Add(historyPanel, 0, 3);
+        ConfigureList(historyList, ["合约", "方向", "目标 / 变化", "触发价格", "时间"], [130, 120, 125, 210, 150]);
+        layout.Controls.Add(ListSection("最近触发", historyList, new Padding(0, 16, 0, 0)), 0, 3);
         page.Controls.Add(layout);
         return page;
     }
@@ -244,7 +310,10 @@ internal sealed class MainForm : Form
         layout.SetColumnSpan(hint, 2);
         traySymbols.Dock = DockStyle.Fill;
         traySymbols.CheckOnClick = true;
-        traySymbols.BorderStyle = BorderStyle.FixedSingle;
+        traySymbols.BorderStyle = BorderStyle.None;
+        traySymbols.BackColor = Surface;
+        traySymbols.ForeColor = Ink;
+        traySymbols.Padding = new Padding(8);
         traySymbols.ItemCheck += TraySymbolChecked;
         layout.Controls.Add(traySymbols, 0, 2);
 
@@ -263,6 +332,18 @@ internal sealed class MainForm : Form
         note.ForeColor = Muted;
         note.MaximumSize = new Size(250, 0);
         detailFlow.Controls.Add(note);
+        var diagnosticsTitle = TextLabel("连接自检", 14, FontStyle.Bold);
+        diagnosticsTitle.Margin = new Padding(0, 18, 0, 0);
+        detailFlow.Controls.Add(diagnosticsTitle);
+        diagnosticsLabel.AutoSize = true;
+        diagnosticsLabel.ForeColor = Muted;
+        diagnosticsLabel.MaximumSize = new Size(280, 0);
+        diagnosticsLabel.Margin = new Padding(0, 18, 0, 8);
+        detailFlow.Controls.Add(diagnosticsLabel);
+        var testButton = new Button { Text = "发送测试通知", AutoSize = true };
+        StyleSecondaryButton(testButton);
+        testButton.Click += (_, _) => TestNotificationRequested?.Invoke();
+        detailFlow.Controls.Add(testButton);
         details.Controls.Add(detailFlow);
         layout.Controls.Add(details, 1, 2);
         var source = TextLabel("行情来源：币安 U 本位永续最新成交价；终端不通时使用服务端转发的同一币安行情。", 9, FontStyle.Regular);
@@ -292,19 +373,28 @@ internal sealed class MainForm : Form
             MessageBox.Show(this, "请选择有效的 U 本位永续合约。", "无法添加规则", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             return;
         }
+        var isTarget = ruleKind.SelectedIndex == 1;
         var threshold = ruleThreshold.Value.ToString("0.0", CultureInfo.InvariantCulture);
-        if (store.State.Rules.Count >= 50 || store.State.Rules.Any(rule =>
-            rule.Symbol == symbol && rule.WindowMinutes == (int)ruleWindow.Value && rule.ThresholdText == threshold))
+        var target = targetPrice.Value.ToString("0.########", CultureInfo.InvariantCulture);
+        var targetDirectionValue = targetDirection.SelectedIndex == 0 ? TargetDirection.Above : TargetDirection.Below;
+        if (store.State.Rules.Count >= 50 || store.State.Rules.Any(rule => isTarget
+            ? rule.Kind == AlertRuleKind.Target && rule.Symbol == symbol && rule.TargetDirection == targetDirectionValue && rule.TargetPriceText == target
+            : rule.Kind == AlertRuleKind.Percentage && rule.Symbol == symbol && rule.WindowMinutes == (int)ruleWindow.Value && rule.ThresholdText == threshold))
         {
             MessageBox.Show(this, "规则已存在，或已达到 50 条上限。", "无法添加规则", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             return;
         }
-        store.State.Rules.Add(new AlertRule
+        var created = new AlertRule
         {
             Symbol = symbol,
-            WindowMinutes = (int)ruleWindow.Value,
-            ThresholdText = threshold,
-        });
+            Kind = isTarget ? AlertRuleKind.Target : AlertRuleKind.Percentage,
+            WindowMinutes = isTarget ? 0 : (int)ruleWindow.Value,
+            ThresholdText = isTarget ? "0" : threshold,
+            TargetDirection = isTarget ? targetDirectionValue : null,
+            TargetPriceText = isTarget ? target : null,
+        };
+        monitor.InitializeRule(created);
+        store.State.Rules.Add(created);
         store.Save();
         RefreshRules();
         monitor.SubscriptionsChanged();
@@ -317,6 +407,8 @@ internal sealed class MainForm : Form
         rule.Enabled = !rule.Enabled;
         rule.RiseTriggered = false;
         rule.FallTriggered = false;
+        rule.TargetTriggered = false;
+        if (rule.Enabled) monitor.InitializeRule(rule);
         store.Save();
         RefreshRules();
         monitor.SubscriptionsChanged();
@@ -339,11 +431,22 @@ internal sealed class MainForm : Form
         {
             rulesList.Items.Add(new ListViewItem(new[] {
                 rule.Symbol,
-                $"{rule.WindowMinutes} 分钟内上涨或下跌 ≥ {rule.ThresholdText}%",
+                rule.Kind == AlertRuleKind.Target
+                    ? $"{(rule.TargetDirection == TargetDirection.Above ? "达到或高于" : "达到或低于")} {rule.TargetPriceText}"
+                    : $"{rule.WindowMinutes} 分钟内上涨或下跌 ≥ {rule.ThresholdText}%",
                 rule.Enabled ? "已启用" : "已暂停",
             }) { Tag = rule.Id, ForeColor = rule.Enabled ? Ink : Muted });
         }
         rulesList.EndUpdate();
+    }
+
+    private void UpdateRuleFields()
+    {
+        var target = ruleKind.SelectedIndex == 1;
+        if (ruleWindowField is not null) ruleWindowField.Visible = !target;
+        if (ruleThresholdField is not null) ruleThresholdField.Visible = !target;
+        if (targetDirectionField is not null) targetDirectionField.Visible = target;
+        if (targetPriceField is not null) targetPriceField.Visible = target;
     }
 
     private void UpdateTraySymbolList()
@@ -386,7 +489,13 @@ internal sealed class MainForm : Form
 
     private static Panel Field(string label, Control control)
     {
-        var panel = new Panel { Width = control.Width + 12, Height = 56, Margin = new Padding(0, 0, 10, 0) };
+        var panel = new Panel
+        {
+            Width = control.Width + 12,
+            Height = 56,
+            Margin = new Padding(0, 0, 10, 0),
+            BackColor = Surface,
+        };
         var fieldLabel = TextLabel(label, 8.5f, FontStyle.Regular);
         fieldLabel.ForeColor = Muted;
         fieldLabel.Location = new Point(0, 0);
@@ -403,7 +512,11 @@ internal sealed class MainForm : Form
         list.FullRowSelect = true;
         list.GridLines = false;
         list.HideSelection = false;
-        list.BorderStyle = BorderStyle.FixedSingle;
+        list.BorderStyle = BorderStyle.None;
+        list.BackColor = Surface;
+        list.ForeColor = Ink;
+        list.HeaderStyle = ColumnHeaderStyle.Nonclickable;
+        list.Font = new Font("Segoe UI Variable Text", 9.5f);
         for (var index = 0; index < columns.Length; index++) list.Columns.Add(columns[index], widths[index]);
     }
 
@@ -426,5 +539,56 @@ internal sealed class MainForm : Form
         button.ForeColor = Color.White;
         button.Padding = new Padding(12, 7, 12, 7);
         button.Cursor = Cursors.Hand;
+        button.FlatAppearance.MouseOverBackColor = PrimaryHover;
+        button.FlatAppearance.MouseDownBackColor = PrimaryHover;
+    }
+
+    private static void StyleSecondaryButton(Button button)
+    {
+        button.FlatStyle = FlatStyle.Flat;
+        button.FlatAppearance.BorderColor = Divider;
+        button.FlatAppearance.BorderSize = 1;
+        button.BackColor = Color.White;
+        button.ForeColor = Ink;
+        button.Padding = new Padding(10, 6, 10, 6);
+        button.Cursor = Cursors.Hand;
+        button.FlatAppearance.MouseOverBackColor = PrimarySoft;
+    }
+
+    private static Control ListSection(string title, ListView list, Padding? margin = null)
+    {
+        var layout = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 2,
+            Margin = margin ?? Padding.Empty,
+        };
+        layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        var heading = TextLabel(title, 10, FontStyle.Bold);
+        heading.Margin = new Padding(2, 0, 0, 8);
+        layout.Controls.Add(heading, 0, 0);
+        layout.Controls.Add(list, 0, 1);
+        return layout;
+    }
+
+    private static void DrawTab(TabControl tabs, DrawItemEventArgs eventArgs)
+    {
+        var selected = eventArgs.Index == tabs.SelectedIndex;
+        var bounds = eventArgs.Bounds;
+        using var background = new SolidBrush(selected ? Color.White : Surface);
+        using var foreground = new SolidBrush(selected ? Ink : Muted);
+        eventArgs.Graphics.FillRectangle(background, bounds);
+        var text = tabs.TabPages[eventArgs.Index].Text;
+        using var tabFont = new Font("Segoe UI Variable Text", 10, selected ? FontStyle.Bold : FontStyle.Regular);
+        TextRenderer.DrawText(
+            eventArgs.Graphics, text, tabFont,
+            bounds, selected ? Ink : Muted,
+            TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine
+        );
+        if (selected)
+        {
+            using var accent = new SolidBrush(Primary);
+            eventArgs.Graphics.FillRectangle(accent, bounds.Left + 18, bounds.Bottom - 3, bounds.Width - 36, 3);
+        }
     }
 }

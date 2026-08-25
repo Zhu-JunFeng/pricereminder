@@ -19,6 +19,9 @@ final class AppModel: ObservableObject {
     @Published private(set) var monitorState: MonitorState = .disconnected
     @Published private(set) var statusMessage = "监控未启动"
     @Published private(set) var backgroundStatusMessage = "仅支持前台监控"
+    @Published private(set) var lastPriceReceivedAt: Date?
+    @Published private(set) var reconnectCount = 0
+    @Published private(set) var lastConnectionError: String?
     @Published var primarySymbol = UserDefaults.standard.string(forKey: "primarySymbol") ?? "BTCUSDT"
     @Published var menuSymbols: [String] = UserDefaults.standard.stringArray(forKey: "menuSymbols") ?? ["BTCUSDT"]
 
@@ -125,8 +128,28 @@ final class AppModel: ObservableObject {
     func addRule(symbol: String, windowMinutes: Int, threshold: String) throws {
         let candidate = try AlertRule(symbol: symbol, windowMinutes: windowMinutes, thresholdText: threshold)
         guard rules.count < 50 else { throw PriceCoreError.invalidThreshold }
-        guard !rules.contains(where: { $0.symbol == candidate.symbol && $0.windowMinutes == candidate.windowMinutes && $0.threshold == candidate.threshold }) else {
+        guard !rules.contains(where: {
+            $0.kind == .percentage && $0.symbol == candidate.symbol
+                && $0.windowMinutes == candidate.windowMinutes && $0.threshold == candidate.threshold
+        }) else {
             throw PriceCoreError.duplicateRule
+        }
+        rules.append(candidate)
+        LocalPersistence.saveRules(rules)
+        rulesDidChange()
+    }
+
+    func addTargetRule(symbol: String, direction: TargetDirection, targetPrice: String) throws {
+        var candidate = try AlertRule(symbol: symbol, targetDirection: direction, targetPriceText: targetPrice)
+        guard rules.count < 50 else { throw PriceCoreError.invalidThreshold }
+        guard !rules.contains(where: {
+            $0.kind == .target && $0.symbol == candidate.symbol
+                && $0.targetDirection == direction && $0.targetPrice == candidate.targetPrice
+        }) else {
+            throw PriceCoreError.duplicateRule
+        }
+        if let current = prices[candidate.symbol] {
+            _ = RuleEngine.initialize(rule: &candidate, current: current, buffer: buffer)
         }
         rules.append(candidate)
         LocalPersistence.saveRules(rules)
@@ -138,6 +161,10 @@ final class AppModel: ObservableObject {
         rules[index].isEnabled = enabled
         rules[index].riseTriggered = false
         rules[index].fallTriggered = false
+        rules[index].targetTriggered = false
+        if enabled, let current = prices[rules[index].symbol] {
+            _ = RuleEngine.initialize(rule: &rules[index], current: current, buffer: buffer)
+        }
         LocalPersistence.saveRules(rules)
         rulesDidChange()
     }
@@ -318,6 +345,8 @@ final class AppModel: ObservableObject {
                 } catch {
                     relayRetryTask?.cancel()
                     guard !Task.isCancelled else { return }
+                    reconnectCount += 1
+                    lastConnectionError = error.localizedDescription
                     relayNext.toggle()
                     monitorState = .disconnected
                     statusMessage = relayNext
@@ -375,6 +404,7 @@ final class AppModel: ObservableObject {
         guard buffer.add(point) else { return }
         prices[point.symbol] = point
         lastReceivedAt = Date()
+        lastPriceReceivedAt = Date()
         connectionFailureNotified = false
         if point.replay {
             monitorState = .warmingUp
@@ -409,7 +439,7 @@ final class AppModel: ObservableObject {
 
     private func updateReadiness() {
         let warming = rules.contains { rule in
-            rule.isEnabled && !buffer.covers(
+            rule.isEnabled && rule.kind == .percentage && !buffer.covers(
                 symbol: rule.symbol,
                 durationMilliseconds: Int64(rule.windowMinutes) * 60_000
             )
@@ -432,8 +462,9 @@ final class AppModel: ObservableObject {
         let records = triggers.map {
             TriggerRecord(
                 id: "\($0.ruleID.uuidString):\($0.direction.rawValue):\($0.eventTime)",
-                symbol: $0.symbol, direction: $0.direction, changePercent: $0.changePercent,
+                symbol: $0.symbol, kind: $0.kind, direction: $0.direction, changePercent: $0.changePercent,
                 windowMinutes: $0.windowMinutes, thresholdText: $0.thresholdText,
+                targetPriceText: $0.targetPriceText,
                 priceText: $0.priceText, eventTime: $0.eventTime
             )
         }
@@ -491,11 +522,16 @@ final class AppModel: ObservableObject {
         guard !events.isEmpty else { return }
         let records = events.flatMap { event in
             event.triggers.compactMap { trigger -> TriggerRecord? in
-                guard let change = Decimal(string: trigger.changePct, locale: Locale(identifier: "en_US_POSIX")) else { return nil }
+                let kind = trigger.kind ?? .percentage
+                let change = trigger.changePct.flatMap {
+                    Decimal(string: $0, locale: Locale(identifier: "en_US_POSIX"))
+                }
+                if kind == .percentage, change == nil { return nil }
                 return TriggerRecord(
                     id: "\(event.id):\(trigger.ruleId):\(trigger.direction.rawValue)",
-                    symbol: trigger.symbol, direction: trigger.direction, changePercent: change,
-                    windowMinutes: trigger.windowMinutes, thresholdText: trigger.thresholdPct,
+                    symbol: trigger.symbol, kind: kind, direction: trigger.direction, changePercent: change,
+                    windowMinutes: trigger.windowMinutes, thresholdText: trigger.thresholdPct ?? "",
+                    targetPriceText: trigger.targetPrice,
                     priceText: trigger.price, eventTime: trigger.eventTime
                 )
             }
@@ -520,8 +556,12 @@ final class AppModel: ObservableObject {
         let content = UNMutableNotificationContent()
         content.title = "\(symbol) 价格预警"
         content.body = triggers.map {
+            if $0.kind == .target {
+                let direction = $0.direction == .rise ? "达到或高于" : "达到或低于"
+                return "\(direction)目标价 \($0.targetPriceText ?? "--")"
+            }
             let direction = $0.direction == .rise ? "上涨" : "下跌"
-            return "\($0.windowMinutes)分钟\(direction) \($0.changePercent.formatted(.number.precision(.fractionLength(2))))%（阈值 \($0.thresholdText)%）"
+            return "\($0.windowMinutes)分钟\(direction) \(($0.changePercent ?? .zero).formatted(.number.precision(.fractionLength(2))))%（阈值 \($0.thresholdText)%）"
         }.joined(separator: "；") + " · 最新价 \(triggers[0].priceText)"
         content.sound = .default
         try? await UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: "alert:\(symbol):\(triggers[0].eventTime)", content: content, trigger: nil))
@@ -534,6 +574,33 @@ final class AppModel: ObservableObject {
         content.body = body
         content.sound = .default
         try? await UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: "monitor-health", content: content, trigger: nil))
+    }
+
+    func refreshSelfCheck() async {
+        await refreshNotificationAuthorization()
+    }
+
+    func sendTestNotification() async -> Bool {
+        await refreshNotificationAuthorization()
+        guard notificationsAllowed else { return false }
+        await sendHealthNotification(title: "币价提醒测试", body: "系统通知可正常接收")
+        return true
+    }
+
+    var connectionSourceLabel: String {
+        usingServerRelay ? "服务端中继" : "终端直连"
+    }
+
+    var notificationStatusLabel: String {
+        notificationsAllowed ? "已允许" : "未允许"
+    }
+
+    var subscribedSymbolCount: Int { desiredSymbols.count }
+
+    var latestPriceDelayText: String {
+        guard let latest = prices.values.max(by: { $0.eventTime < $1.eventTime }) else { return "尚未收到行情" }
+        let delay = max(0, Int64(Date().timeIntervalSince1970 * 1_000) - latest.eventTime)
+        return delay < 1_000 ? "< 1 秒" : String(format: "%.1f 秒", Double(delay) / 1_000)
     }
 
     #if os(iOS)

@@ -15,9 +15,11 @@ import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 import world.zcn.pricereminder.PriceReminderApplication
 import world.zcn.pricereminder.core.AlertRule
+import world.zcn.pricereminder.core.AlertRuleKind
 import world.zcn.pricereminder.core.PriceBuffer
 import world.zcn.pricereminder.core.PricePoint
 import world.zcn.pricereminder.core.RuleEngine
+import world.zcn.pricereminder.core.TargetDirection
 import world.zcn.pricereminder.data.CombinedTradeDto
 import world.zcn.pricereminder.data.RelayMessage
 import world.zcn.pricereminder.data.TriggerHistory
@@ -40,13 +42,15 @@ class PriceMonitorService : Service() {
     private var lastSurfaceUpdateAt = 0L
     private var connectionSource = ConnectionSource.DIRECT
     private var serverConnectedAt = 0L
+    private var reconnectCount = 0
+    private var lastError: String? = null
     private val lastPersistedEventTimes = ConcurrentHashMap<String, Long>()
 
     private val container get() = (application as PriceReminderApplication).container
     override fun onCreate() {
         super.onCreate()
-        MonitorBus.update { it.copy(running = true) }
         notifications = NotificationCoordinator(this)
+        MonitorBus.update { it.copy(running = true, notificationsEnabled = notifications.notificationsEnabled()) }
         restorePrices()
         startForeground(
             NotificationCoordinator.MONITOR_ID,
@@ -84,6 +88,9 @@ class PriceMonitorService : Service() {
             it.copy(
                 connected = false, warmingUp = true,
                 message = if (source == ConnectionSource.DIRECT) "正在直连币安" else "正在连接服务端行情",
+                source = if (source == ConnectionSource.DIRECT) "终端直连" else "服务端中继",
+                subscribedCount = subscribedSymbols.size,
+                notificationsEnabled = notifications.notificationsEnabled(),
             )
         }
         scope.launch {
@@ -91,6 +98,7 @@ class PriceMonitorService : Service() {
                 refreshRules()
                 val symbols = (activeRules.values.filter { it.enabled }.map { it.symbol } + container.localStore.primarySymbol).distinct().take(50)
                 subscribedSymbols = symbols.toSet()
+                MonitorBus.update { it.copy(subscribedCount = symbols.size) }
                 val request = if (source == ConnectionSource.DIRECT) {
                     container.apiClient.streamRequest(symbols)
                 } else {
@@ -121,6 +129,7 @@ class PriceMonitorService : Service() {
                 runCatching { PricePoint(trade.symbol, trade.price, trade.eventTime) }.getOrNull()
                     ?.let {
                         lastMessageAt = System.currentTimeMillis()
+                        MonitorBus.update { state -> state.copy(lastReceivedAt = lastMessageAt, lastError = null) }
                         pendingPrices[it.symbol] = it
                     }
                 return
@@ -133,6 +142,7 @@ class PriceMonitorService : Service() {
                     runCatching { PricePoint(message.symbol, message.price, message.eventTime, message.replay) }.getOrNull()
                         ?.let {
                             lastMessageAt = System.currentTimeMillis()
+                            MonitorBus.update { state -> state.copy(lastReceivedAt = lastMessageAt, lastError = null) }
                             pendingPrices[it.symbol] = it
                         }
                 }
@@ -192,8 +202,10 @@ class PriceMonitorService : Service() {
         container.localStore.appendHistory(triggers.map {
             TriggerHistory(
                 id = "${it.ruleId}:${it.direction}:${it.eventTime}", symbol = it.symbol,
-                direction = it.direction.name.lowercase(), changePercent = it.changePercent.toPlainString(),
+                direction = it.direction.name.lowercase(), kind = it.kind.name.lowercase(),
+                changePercent = it.changePercent?.toPlainString(),
                 windowMinutes = it.windowMinutes, thresholdText = it.thresholdText,
+                targetPriceText = it.targetPriceText,
                 priceText = it.priceText, eventTime = it.eventTime,
             )
         })
@@ -205,18 +217,30 @@ class PriceMonitorService : Service() {
         activeRules.keys.removeAll { it !in ids }
         stored.forEach { item ->
             val existing = activeRules[item.id]
-            if (existing == null || existing.symbol != item.symbol || existing.windowMinutes != item.windowMinutes || existing.thresholdText != item.thresholdText || existing.enabled != item.enabled) {
-                activeRules[item.id] = AlertRule(
+            if (existing == null || existing.symbol != item.symbol || existing.windowMinutes != item.windowMinutes ||
+                existing.thresholdText != item.thresholdText || existing.enabled != item.enabled ||
+                existing.kind.name.lowercase() != item.kind || existing.targetDirection?.name?.lowercase() != item.targetDirection ||
+                existing.targetPriceText != item.targetPriceText) {
+                val created = AlertRule(
                     item.id, item.symbol, item.windowMinutes, item.thresholdText,
                     item.enabled, item.riseTriggered, item.fallTriggered,
+                    AlertRuleKind.valueOf(item.kind.uppercase()),
+                    item.targetDirection?.let { TargetDirection.valueOf(it.uppercase()) },
+                    item.targetPriceText, item.targetTriggered,
                 )
+                if (created.kind == AlertRuleKind.TARGET && created.enabled) {
+                    buffer.latest(created.symbol)?.let { RuleEngine.initialize(created, it, buffer) }
+                }
+                activeRules[item.id] = created
             }
         }
     }
 
     private fun persistRuleStates() {
         val updated = container.localStore.rules().map { item ->
-            activeRules[item.id]?.let { item.copy(riseTriggered = it.riseTriggered, fallTriggered = it.fallTriggered) } ?: item
+            activeRules[item.id]?.let {
+                item.copy(riseTriggered = it.riseTriggered, fallTriggered = it.fallTriggered, targetTriggered = it.targetTriggered)
+            } ?: item
         }
         container.localStore.saveRules(updated)
     }
@@ -256,7 +280,7 @@ class PriceMonitorService : Service() {
     private fun updateReadiness() {
         refreshRules()
         val warming = activeRules.values.any { rule ->
-            rule.enabled && !buffer.covers(rule.symbol, rule.windowMinutes * 60_000L)
+            rule.enabled && rule.kind == AlertRuleKind.PERCENTAGE && !buffer.covers(rule.symbol, rule.windowMinutes * 60_000L)
         }
         MonitorBus.update {
             it.copy(
@@ -276,6 +300,8 @@ class PriceMonitorService : Service() {
 
     private fun scheduleReconnect(failedSource: ConnectionSource, reason: String) {
         if (reconnectJob?.isActive == true) return
+        reconnectCount += 1
+        lastError = reason
         ready = false
         connectionSource = if (failedSource == ConnectionSource.DIRECT) ConnectionSource.SERVER else ConnectionSource.DIRECT
         val message = if (failedSource == ConnectionSource.DIRECT) {
@@ -283,7 +309,14 @@ class PriceMonitorService : Service() {
         } else {
             "服务端连接中断，5 秒后重新检测币安"
         }
-        MonitorBus.update { it.copy(connected = false, warmingUp = true, message = "$message：$reason") }
+        MonitorBus.update {
+            it.copy(
+                connected = false, warmingUp = true, message = "$message：$reason",
+                reconnectCount = reconnectCount, lastError = reason,
+                source = if (failedSource == ConnectionSource.DIRECT) "终端直连" else "服务端中继",
+                notificationsEnabled = notifications.notificationsEnabled(),
+            )
+        }
         reconnectJob = scope.launch {
             if (failedSource == ConnectionSource.SERVER) delay(5.seconds)
             connect()

@@ -88,6 +88,7 @@ internal static class RuleEngine
     public static IReadOnlyList<AlertTrigger> Evaluate(AlertRule rule, PricePoint current, PriceBuffer buffer)
     {
         if (!rule.Enabled || !string.Equals(current.Symbol, rule.Symbol, StringComparison.OrdinalIgnoreCase)) return [];
+        if (rule.Kind == AlertRuleKind.Target) return EvaluateTarget(rule, current);
         var cutoff = current.EventTime - rule.WindowMinutes * 60_000L;
         var baseline = buffer.AtOrBefore(rule.Symbol, cutoff);
         if (baseline is null || cutoff - baseline.EventTime > StaleMilliseconds || baseline.Price == 0) return [];
@@ -109,8 +110,40 @@ internal static class RuleEngine
         return triggers;
     }
 
+    public static bool Initialize(AlertRule rule, PricePoint current, PriceBuffer buffer)
+    {
+        if (rule.Kind == AlertRuleKind.Target)
+        {
+            if (rule.TargetDirection is null || rule.TargetPrice is null) return false;
+            rule.TargetTriggered = Reached(rule.TargetDirection.Value, current.Price, rule.TargetPrice.Value);
+            return true;
+        }
+        var cutoff = current.EventTime - rule.WindowMinutes * 60_000L;
+        var baseline = buffer.AtOrBefore(rule.Symbol, cutoff);
+        if (baseline is null || cutoff - baseline.EventTime > StaleMilliseconds || baseline.Price == 0) return false;
+        var change = (current.Price - baseline.Price) / baseline.Price * 100m;
+        rule.RiseTriggered = change >= rule.Threshold;
+        rule.FallTriggered = change <= -rule.Threshold;
+        return true;
+    }
+
+    private static IReadOnlyList<AlertTrigger> EvaluateTarget(AlertRule rule, PricePoint current)
+    {
+        if (rule.TargetDirection is null || rule.TargetPrice is null) return [];
+        var reached = Reached(rule.TargetDirection.Value, current.Price, rule.TargetPrice.Value);
+        if (rule.TargetTriggered && !reached) rule.TargetTriggered = false;
+        if (rule.TargetTriggered || !reached) return [];
+        rule.TargetTriggered = true;
+        var direction = rule.TargetDirection == TargetDirection.Above ? TriggerDirection.Rise : TriggerDirection.Fall;
+        return [new AlertTrigger(rule.Id, rule.Symbol, AlertRuleKind.Target, direction, null, "", 0,
+            rule.TargetPriceText, current.PriceText, "", current.EventTime)];
+    }
+
+    private static bool Reached(TargetDirection direction, decimal current, decimal target) =>
+        direction == TargetDirection.Above ? current >= target : current <= target;
+
     private static AlertTrigger MakeTrigger(
         AlertRule rule, PricePoint current, PricePoint baseline, TriggerDirection direction, decimal change) =>
-        new(rule.Id, rule.Symbol, direction, change, rule.ThresholdText, rule.WindowMinutes,
-            current.PriceText, baseline.PriceText, current.EventTime);
+        new(rule.Id, rule.Symbol, AlertRuleKind.Percentage, direction, change, rule.ThresholdText, rule.WindowMinutes,
+            null, current.PriceText, baseline.PriceText, current.EventTime);
 }

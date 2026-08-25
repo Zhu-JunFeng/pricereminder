@@ -73,3 +73,35 @@ func TestRequiresCompleteWindow(t *testing.T) {
 		t.Fatalf("expected no trigger, got %#v", got)
 	}
 }
+
+func TestTargetPriceTriggersOnceAndRearms(t *testing.T) {
+	buffer := pricebuffer.New()
+	rule, err := NewTargetRule("target-1", "BTCUSDT", Above, "105")
+	if err != nil {
+		t.Fatal(err)
+	}
+	current := mustPoint(t, "BTCUSDT", "104", 1_000)
+	buffer.Add(current)
+	got, _ := Evaluate(&rule, current, buffer)
+	if len(got) != 0 {
+		t.Fatalf("target should wait below threshold: %#v", got)
+	}
+	current = mustPoint(t, "BTCUSDT", "105", 2_000)
+	buffer.Add(current)
+	got, _ = Evaluate(&rule, current, buffer)
+	if len(got) != 1 || got[0].Kind != Target || got[0].TargetPrice != "105" {
+		t.Fatalf("equal target should trigger: %#v", got)
+	}
+	current = mustPoint(t, "BTCUSDT", "106", 3_000)
+	buffer.Add(current)
+	got, _ = Evaluate(&rule, current, buffer)
+	if len(got) != 0 {
+		t.Fatalf("target should not repeat while reached: %#v", got)
+	}
+	current = mustPoint(t, "BTCUSDT", "104", 4_000)
+	buffer.Add(current)
+	_, _ = Evaluate(&rule, current, buffer)
+	if rule.TargetTriggered {
+		t.Fatal("target should rearm after leaving range")
+	}
+}

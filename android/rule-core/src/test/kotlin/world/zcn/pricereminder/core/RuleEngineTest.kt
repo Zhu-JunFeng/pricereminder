@@ -43,6 +43,30 @@ class RuleEngineTest {
         assertTrue(RuleEngine.evaluate(rule, current, buffer).isEmpty())
     }
 
+    @Test fun targetPriceTriggersOnceAndRearmsAfterLeavingRange() {
+        val buffer = PriceBuffer()
+        val rule = AlertRule(
+            symbol = "BTCUSDT", windowMinutes = 0, thresholdText = "0",
+            kind = AlertRuleKind.TARGET, targetDirection = TargetDirection.ABOVE,
+            targetPriceText = "105",
+        )
+        var current = PricePoint("BTCUSDT", "104", 1_000)
+        buffer.add(current)
+        assertTrue(RuleEngine.evaluate(rule, current, buffer).isEmpty())
+        current = PricePoint("BTCUSDT", "105", 2_000)
+        buffer.add(current)
+        val trigger = RuleEngine.evaluate(rule, current, buffer).single()
+        assertEquals(AlertRuleKind.TARGET, trigger.kind)
+        assertEquals("105", trigger.targetPriceText)
+        current = PricePoint("BTCUSDT", "106", 3_000)
+        buffer.add(current)
+        assertTrue(RuleEngine.evaluate(rule, current, buffer).isEmpty())
+        current = PricePoint("BTCUSDT", "104", 4_000)
+        buffer.add(current)
+        assertTrue(RuleEngine.evaluate(rule, current, buffer).isEmpty())
+        assertFalse(rule.targetTriggered)
+    }
+
     @Test fun restoredBufferKeepsLatestPointPerSecondAndOneHour() {
         val buffer = PriceBuffer()
         buffer.restore(

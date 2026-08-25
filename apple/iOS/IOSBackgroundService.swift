@@ -87,11 +87,15 @@ actor IOSBackgroundService {
         return local.map { item in
             guard let server = remoteByID[item.id],
                   server.symbol == item.symbol,
+                  server.kind == item.kind,
                   server.windowMinutes == item.windowMinutes,
-                  server.threshold == item.threshold else { return item }
+                  server.threshold == item.threshold,
+                  server.targetDirection == item.targetDirection,
+                  server.targetPrice == item.targetPrice else { return item }
             var result = item
             result.riseTriggered = server.riseTriggered
             result.fallTriggered = server.fallTriggered
+            result.targetTriggered = server.targetTriggered
             return result
         }
     }

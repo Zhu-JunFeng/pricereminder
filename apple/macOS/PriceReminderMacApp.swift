@@ -91,7 +91,11 @@ struct MacSettingsView: View {
     @State private var ruleSymbol = "BTCUSDT"
     @State private var ruleWindow = 5
     @State private var ruleThreshold = "3"
+    @State private var ruleKind: AlertRuleKind = .percentage
+    @State private var targetDirection: TargetDirection = .above
+    @State private var targetPrice = ""
     @State private var ruleError: String?
+    @State private var testResult: String?
 
     var body: some View {
         TabView {
@@ -129,8 +133,14 @@ struct MacSettingsView: View {
 
             VStack(alignment: .leading, spacing: 12) {
                 Text("预警规则").font(.title2.weight(.semibold))
-                Text("当前价相对 N 分钟前上涨或下跌达到阈值时提醒；两个方向独立重新武装。")
+                Text("同时支持滚动涨跌幅和目标价格提醒。")
                     .foregroundStyle(.secondary)
+
+                Picker("提醒类型", selection: $ruleKind) {
+                    Text("涨跌幅").tag(AlertRuleKind.percentage)
+                    Text("目标价格").tag(AlertRuleKind.target)
+                }
+                .pickerStyle(.segmented)
 
                 HStack(spacing: 10) {
                     Picker("合约", selection: $ruleSymbol) {
@@ -139,10 +149,20 @@ struct MacSettingsView: View {
                         }
                     }
                     .frame(maxWidth: 220)
-                    Stepper("\(ruleWindow) 分钟", value: $ruleWindow, in: 1...60)
+                    if ruleKind == .percentage {
+                        Stepper("\(ruleWindow) 分钟", value: $ruleWindow, in: 1...60)
+                            .frame(width: 135)
+                        TextField("阈值 %", text: $ruleThreshold)
+                            .frame(width: 72)
+                    } else {
+                        Picker("条件", selection: $targetDirection) {
+                            Text("达到或高于").tag(TargetDirection.above)
+                            Text("达到或低于").tag(TargetDirection.below)
+                        }
                         .frame(width: 135)
-                    TextField("阈值 %", text: $ruleThreshold)
-                        .frame(width: 72)
+                        TextField("目标价格", text: $targetPrice)
+                            .frame(width: 105)
+                    }
                     Button("添加") { addRule() }
                         .buttonStyle(.borderedProminent)
                 }
@@ -152,13 +172,13 @@ struct MacSettingsView: View {
                 }
 
                 if model.rules.isEmpty {
-                    ContentUnavailableView("还没有预警规则", systemImage: "bell.slash", description: Text("添加后会先积累完整时间窗口。"))
+                    ContentUnavailableView("还没有预警规则", systemImage: "bell.slash", description: Text("可添加涨跌幅或目标价格提醒。"))
                 } else {
                     List(model.rules) { rule in
                         HStack(spacing: 12) {
                             VStack(alignment: .leading, spacing: 3) {
                                 Text(rule.symbol).font(.headline)
-                                Text("\(rule.windowMinutes)分钟 · \(rule.thresholdText)%")
+                                Text(ruleDescription(rule))
                                     .foregroundStyle(.secondary)
                             }
                             Spacer()
@@ -177,8 +197,44 @@ struct MacSettingsView: View {
             }
             .padding(20)
             .tabItem { Label("预警", systemImage: "bell") }
+
+            VStack(alignment: .leading, spacing: 12) {
+                Text("连接自检").font(.title2.weight(.semibold))
+                Text("查看实时链路、价格新鲜度和系统通知状态。")
+                    .foregroundStyle(.secondary)
+
+                Group {
+                    DiagnosticRow(label: "监控状态", value: model.statusMessage)
+                    DiagnosticRow(label: "连接路径", value: model.connectionSourceLabel)
+                    DiagnosticRow(label: "订阅合约", value: "\(model.subscribedSymbolCount) 个")
+                    DiagnosticRow(label: "行情延迟", value: model.latestPriceDelayText)
+                    DiagnosticRow(label: "最后接收", value: lastReceivedText)
+                    DiagnosticRow(label: "重连次数", value: "\(model.reconnectCount)")
+                    DiagnosticRow(label: "通知权限", value: model.notificationStatusLabel)
+                    if let error = model.lastConnectionError {
+                        DiagnosticRow(label: "最近错误", value: error)
+                    }
+                }
+
+                HStack {
+                    Button("刷新状态") { Task { await model.refreshSelfCheck() } }
+                    Button("发送测试通知") {
+                        Task {
+                            testResult = await model.sendTestNotification()
+                                ? "测试通知已发送"
+                                : "通知权限未开启"
+                        }
+                    }
+                    if let testResult {
+                        Text(testResult).font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+                Spacer()
+            }
+            .padding(20)
+            .tabItem { Label("自检", systemImage: "stethoscope") }
         }
-        .frame(width: 560, height: 420)
+        .frame(width: 620, height: 460)
         .onAppear {
             selection = Set(model.menuSymbols)
             ruleSymbol = model.primarySymbol
@@ -197,10 +253,40 @@ struct MacSettingsView: View {
 
     private func addRule() {
         do {
-            try model.addRule(symbol: ruleSymbol, windowMinutes: ruleWindow, threshold: ruleThreshold)
+            if ruleKind == .percentage {
+                try model.addRule(symbol: ruleSymbol, windowMinutes: ruleWindow, threshold: ruleThreshold)
+            } else {
+                try model.addTargetRule(symbol: ruleSymbol, direction: targetDirection, targetPrice: targetPrice)
+            }
             ruleError = nil
         } catch {
             ruleError = error.localizedDescription
         }
+    }
+
+    private func ruleDescription(_ rule: AlertRule) -> String {
+        if rule.kind == .target {
+            let direction = rule.targetDirection == .above ? "达到或高于" : "达到或低于"
+            return "\(direction) \(rule.targetPriceText ?? "--")"
+        }
+        return "\(rule.windowMinutes)分钟 · \(rule.thresholdText)%"
+    }
+
+    private var lastReceivedText: String {
+        model.lastPriceReceivedAt?.formatted(date: .omitted, time: .standard) ?? "尚未收到"
+    }
+}
+
+private struct DiagnosticRow: View {
+    let label: String
+    let value: String
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline) {
+            Text(label).frame(width: 84, alignment: .leading).foregroundStyle(.secondary)
+            Text(value).textSelection(.enabled)
+            Spacer()
+        }
+        Divider()
     }
 }

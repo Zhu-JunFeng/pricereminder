@@ -23,13 +23,17 @@ import (
 )
 
 type Rule struct {
-	ID            string `json:"id"`
-	Symbol        string `json:"symbol"`
-	WindowMinutes int    `json:"windowMinutes"`
-	ThresholdText string `json:"thresholdText"`
-	IsEnabled     bool   `json:"isEnabled"`
-	RiseTriggered bool   `json:"riseTriggered"`
-	FallTriggered bool   `json:"fallTriggered"`
+	ID              string                `json:"id"`
+	Symbol          string                `json:"symbol"`
+	Kind            rules.Kind            `json:"kind"`
+	WindowMinutes   int                   `json:"windowMinutes"`
+	ThresholdText   string                `json:"thresholdText"`
+	IsEnabled       bool                  `json:"isEnabled"`
+	RiseTriggered   bool                  `json:"riseTriggered"`
+	FallTriggered   bool                  `json:"fallTriggered"`
+	TargetDirection rules.TargetDirection `json:"targetDirection,omitempty"`
+	TargetPriceText string                `json:"targetPriceText,omitempty"`
+	TargetTriggered bool                  `json:"targetTriggered,omitempty"`
 }
 
 type Snapshot struct {
@@ -71,6 +75,9 @@ func ValidateSnapshot(snapshot Snapshot, validSymbol func(string) bool) (Snapsho
 	seen := make(map[string]struct{}, len(snapshot.Rules))
 	for index := range snapshot.Rules {
 		item := &snapshot.Rules[index]
+		if item.Kind == "" {
+			item.Kind = rules.Percentage
+		}
 		item.Symbol = strings.ToUpper(strings.TrimSpace(item.Symbol))
 		if _, err := uuid.Parse(item.ID); err != nil {
 			return Snapshot{}, errors.New("rule id must be UUID")
@@ -78,12 +85,24 @@ func ValidateSnapshot(snapshot Snapshot, validSymbol func(string) bool) (Snapsho
 		if !validSymbol(item.Symbol) {
 			return Snapshot{}, errors.New("合约不存在或不可交易: " + item.Symbol)
 		}
-		rule, err := rules.NewRule(item.ID, item.Symbol, item.WindowMinutes, item.ThresholdText)
+		var rule rules.Rule
+		var err error
+		if item.Kind == rules.Target {
+			rule, err = rules.NewTargetRule(item.ID, item.Symbol, item.TargetDirection, item.TargetPriceText)
+		} else {
+			rule, err = rules.NewRule(item.ID, item.Symbol, item.WindowMinutes, item.ThresholdText)
+		}
 		if err != nil {
 			return Snapshot{}, err
 		}
-		item.ThresholdText = rule.ThresholdPct.String()
-		key := item.Symbol + ":" + strconv.Itoa(item.WindowMinutes) + ":" + item.ThresholdText
+		item.Kind = rule.Kind
+		if item.Kind == rules.Target {
+			item.TargetPriceText = rule.TargetPriceText
+		} else {
+			item.ThresholdText = rule.ThresholdPct.String()
+		}
+		key := string(item.Kind) + ":" + item.Symbol + ":" + strconv.Itoa(item.WindowMinutes) + ":" +
+			item.ThresholdText + ":" + string(item.TargetDirection) + ":" + item.TargetPriceText
 		if _, exists := seen[key]; exists {
 			return Snapshot{}, errors.New("相同合约、窗口和阈值的规则已存在")
 		}
@@ -169,14 +188,21 @@ func (w *Worker) evaluate(ctx context.Context, point domain.PricePoint) {
 			if item.Symbol != point.Symbol {
 				continue
 			}
-			rule, err := rules.NewRule(item.ID, item.Symbol, item.WindowMinutes, item.ThresholdText)
+			var rule rules.Rule
+			var err error
+			if item.Kind == rules.Target {
+				rule, err = rules.NewTargetRule(item.ID, item.Symbol, item.TargetDirection, item.TargetPriceText)
+			} else {
+				rule, err = rules.NewRule(item.ID, item.Symbol, item.WindowMinutes, item.ThresholdText)
+			}
 			if err != nil {
 				continue
 			}
 			rule.Enabled = item.IsEnabled
 			rule.RiseTriggered = item.RiseTriggered
 			rule.FallTriggered = item.FallTriggered
-			beforeRise, beforeFall := rule.RiseTriggered, rule.FallTriggered
+			rule.TargetTriggered = item.TargetTriggered
+			beforeRise, beforeFall, beforeTarget := rule.RiseTriggered, rule.FallTriggered, rule.TargetTriggered
 			result, err := rules.Evaluate(&rule, point, w.buffer)
 			if err != nil {
 				w.logger.Error("evaluate iOS rule", "device_id", deviceID, "rule_id", item.ID, "error", err)
@@ -184,7 +210,8 @@ func (w *Worker) evaluate(ctx context.Context, point domain.PricePoint) {
 			}
 			item.RiseTriggered = rule.RiseTriggered
 			item.FallTriggered = rule.FallTriggered
-			stateChanged = stateChanged || beforeRise != rule.RiseTriggered || beforeFall != rule.FallTriggered
+			item.TargetTriggered = rule.TargetTriggered
+			stateChanged = stateChanged || beforeRise != rule.RiseTriggered || beforeFall != rule.FallTriggered || beforeTarget != rule.TargetTriggered
 			triggers = append(triggers, result...)
 		}
 		if stateChanged {

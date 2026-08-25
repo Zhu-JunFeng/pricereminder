@@ -44,6 +44,24 @@ func incompleteWindowDoesNotTrigger() throws {
     try expect(RuleEngine.evaluate(rule: &rule, current: current, buffer: buffer).isEmpty, "incomplete window must not trigger")
 }
 
+func targetPriceTriggersAndRearms() throws {
+    var buffer = PriceBuffer()
+    var rule = try AlertRule(symbol: "BTCUSDT", targetDirection: .above, targetPriceText: "105")
+    var current = try PricePoint(symbol: "BTCUSDT", priceText: "104", eventTime: 1_000)
+    buffer.add(current)
+    try expect(RuleEngine.evaluate(rule: &rule, current: current, buffer: buffer).isEmpty, "target must wait below threshold")
+    current = try PricePoint(symbol: "BTCUSDT", priceText: "105", eventTime: 2_000)
+    buffer.add(current)
+    let first = RuleEngine.evaluate(rule: &rule, current: current, buffer: buffer)
+    try expect(first.count == 1 && first[0].kind == .target && first[0].targetPriceText == "105", "equal target must trigger")
+    current = try PricePoint(symbol: "BTCUSDT", priceText: "106", eventTime: 3_000)
+    buffer.add(current)
+    try expect(RuleEngine.evaluate(rule: &rule, current: current, buffer: buffer).isEmpty, "target must not repeat while reached")
+    current = try PricePoint(symbol: "BTCUSDT", priceText: "104", eventTime: 4_000)
+    buffer.add(current)
+    try expect(RuleEngine.evaluate(rule: &rule, current: current, buffer: buffer).isEmpty && !rule.targetTriggered, "leaving target must rearm")
+}
+
 func restoredBufferKeepsLatestPointPerSecondAndOneHour() throws {
     var buffer = PriceBuffer()
     buffer.restore([
@@ -97,6 +115,7 @@ do {
     try equalThresholdTriggersAndRearms()
     try directionsAreIndependent()
     try incompleteWindowDoesNotTrigger()
+    try targetPriceTriggersAndRearms()
     try restoredBufferKeepsLatestPointPerSecondAndOneHour()
     try decodesBinanceContractsAndTrades()
     try decodesServerRelayEvents()

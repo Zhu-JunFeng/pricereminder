@@ -13,6 +13,12 @@ data class MonitorSnapshot(
     val staleSymbols: Set<String> = emptySet(),
     val message: String = "监控未启动",
     val prices: Map<String, LivePrice> = emptyMap(),
+    val source: String = "终端直连",
+    val lastReceivedAt: Long? = null,
+    val reconnectCount: Int = 0,
+    val lastError: String? = null,
+    val subscribedCount: Int = 0,
+    val notificationsEnabled: Boolean = false,
 )
 
 object MonitorBus {

@@ -44,6 +44,8 @@ internal sealed class TrayApplicationContext : ApplicationContext
         };
         monitor.StateChanged += snapshot => Ui(() => ApplySnapshot(snapshot));
         monitor.Triggered += triggers => Ui(() => ShowTriggers(triggers));
+        mainForm.TestNotificationRequested += () => Ui(() =>
+            trayIcon.ShowBalloonTip(5000, "币价提醒测试", "系统通知可正常接收", ToolTipIcon.Info));
 
         monitor.Start();
         _ = LoadContractsAsync();
@@ -85,9 +87,10 @@ internal sealed class TrayApplicationContext : ApplicationContext
     {
         if (triggers.Count == 0) return;
         var first = triggers[0];
-        var body = string.Join("；", triggers.Select(trigger =>
-            $"{trigger.WindowMinutes}分钟{(trigger.Direction == TriggerDirection.Rise ? "上涨" : "下跌")} " +
-            $"{trigger.ChangePercent:F2}%（阈值 {trigger.ThresholdText}%）"));
+        var body = string.Join("；", triggers.Select(trigger => trigger.Kind == AlertRuleKind.Target
+            ? $"{(trigger.Direction == TriggerDirection.Rise ? "达到或高于" : "达到或低于")}目标价 {trigger.TargetPriceText}"
+            : $"{trigger.WindowMinutes}分钟{(trigger.Direction == TriggerDirection.Rise ? "上涨" : "下跌")} " +
+              $"{(trigger.ChangePercent ?? 0):F2}%（阈值 {trigger.ThresholdText}%）"));
         trayIcon.ShowBalloonTip(8000, $"{first.Symbol} 价格预警", $"{body} · 最新价 {first.PriceText}",
             first.Direction == TriggerDirection.Rise ? ToolTipIcon.Info : ToolTipIcon.Warning);
         mainForm.RefreshHistory();

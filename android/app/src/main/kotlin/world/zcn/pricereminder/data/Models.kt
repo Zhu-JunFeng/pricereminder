@@ -11,6 +11,10 @@ data class StoredRule(
     val enabled: Boolean = true,
     val riseTriggered: Boolean = false,
     val fallTriggered: Boolean = false,
+    val kind: String = "percentage",
+    val targetDirection: String? = null,
+    val targetPriceText: String? = null,
+    val targetTriggered: Boolean = false,
 )
 
 @Serializable
@@ -18,9 +22,11 @@ data class TriggerHistory(
     val id: String,
     val symbol: String,
     val direction: String,
-    val changePercent: String,
+    val kind: String = "percentage",
+    val changePercent: String? = null,
     val windowMinutes: Int,
     val thresholdText: String,
+    val targetPriceText: String? = null,
     val priceText: String,
     val eventTime: Long,
 )

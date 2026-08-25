@@ -9,13 +9,13 @@ struct RulesView: View {
         List {
             Section {
                 if model.rules.isEmpty {
-                    ContentUnavailableView("还没有预警规则", systemImage: "bell.slash", description: Text("添加规则后，监控会先积累完整时间窗口。"))
+                    ContentUnavailableView("还没有预警规则", systemImage: "bell.slash", description: Text("可添加涨跌幅提醒或目标价格提醒。"))
                 } else {
                     ForEach(model.rules) { rule in
                         HStack(spacing: 12) {
                             VStack(alignment: .leading, spacing: 4) {
                                 Text(rule.symbol).font(.headline)
-                                Text("\(rule.windowMinutes) 分钟内上涨或下跌 ≥ \(rule.thresholdText)%")
+                                Text(ruleDescription(rule))
                                     .font(.caption).foregroundStyle(.secondary)
                             }
                             Spacer()
@@ -27,7 +27,7 @@ struct RulesView: View {
                         .swipeActions { Button("删除", role: .destructive) { model.deleteRule(id: rule.id) } }
                     }
                 }
-            } header: { Text("滚动窗口双向提醒 · \(model.rules.count)/50") }
+            } header: { Text("涨跌幅与目标价格 · \(model.rules.count)/50") }
 
             Section("最近触发") {
                 if model.history.isEmpty {
@@ -39,8 +39,8 @@ struct RulesView: View {
                             Image(systemName: event.direction == .rise ? "arrow.up.right" : "arrow.down.right")
                                 .foregroundStyle(event.direction == .rise ? AppTheme.rise : AppTheme.fall)
                             VStack(alignment: .leading, spacing: 3) {
-                                Text("\(event.symbol) · \(event.windowMinutes)分钟").font(.headline)
-                                Text("\(event.changePercent.formatted(.number.precision(.fractionLength(2))))% · \(event.priceText)")
+                                Text(eventTitle(event)).font(.headline)
+                                Text(eventDescription(event))
                                     .font(.caption).foregroundStyle(.secondary)
                             }
                             Spacer()
@@ -55,6 +55,26 @@ struct RulesView: View {
         .toolbar { Button { showingAdd = true } label: { Label("添加", systemImage: "plus") } }
         .sheet(isPresented: $showingAdd) { AddRuleView() }
     }
+
+    private func ruleDescription(_ rule: AlertRule) -> String {
+        if rule.kind == .target {
+            let direction = rule.targetDirection == .above ? "达到或高于" : "达到或低于"
+            return "\(direction) \(rule.targetPriceText ?? "--")"
+        }
+        return "\(rule.windowMinutes) 分钟内上涨或下跌 ≥ \(rule.thresholdText)%"
+    }
+
+    private func eventTitle(_ event: TriggerRecord) -> String {
+        event.kind == .target ? "\(event.symbol) · 目标价" : "\(event.symbol) · \(event.windowMinutes)分钟"
+    }
+
+    private func eventDescription(_ event: TriggerRecord) -> String {
+        if event.kind == .target {
+            let direction = event.direction == .rise ? "达到或高于" : "达到或低于"
+            return "\(direction) \(event.targetPriceText ?? "--") · \(event.priceText)"
+        }
+        return "\((event.changePercent ?? .zero).formatted(.number.precision(.fractionLength(2))))% · \(event.priceText)"
+    }
 }
 
 private struct AddRuleView: View {
@@ -63,12 +83,20 @@ private struct AddRuleView: View {
     @State private var symbol = "BTCUSDT"
     @State private var window = 5
     @State private var threshold = "3"
+    @State private var kind: AlertRuleKind = .percentage
+    @State private var targetDirection: TargetDirection = .above
+    @State private var targetPrice = ""
     @State private var error: String?
     @State private var showingContracts = false
 
     var body: some View {
         NavigationStack {
             Form {
+                Picker("提醒类型", selection: $kind) {
+                    Text("涨跌幅").tag(AlertRuleKind.percentage)
+                    Text("目标价格").tag(AlertRuleKind.target)
+                }
+                .pickerStyle(.segmented)
                 Button { showingContracts = true } label: {
                     LabeledContent("合约") {
                         HStack(spacing: 6) {
@@ -80,11 +108,21 @@ private struct AddRuleView: View {
                     }
                 }
                 .foregroundStyle(.primary)
-                Stepper("时间窗口：\(window) 分钟", value: $window, in: 1...60)
-                TextField("变化阈值", text: $threshold).keyboardType(.decimalPad)
+                if kind == .percentage {
+                    Stepper("时间窗口：\(window) 分钟", value: $window, in: 1...60)
+                    TextField("变化阈值 (%)", text: $threshold).keyboardType(.decimalPad)
+                } else {
+                    Picker("触发条件", selection: $targetDirection) {
+                        Text("达到或高于").tag(TargetDirection.above)
+                        Text("达到或低于").tag(TargetDirection.below)
+                    }
+                    TextField("目标价格", text: $targetPrice).keyboardType(.decimalPad)
+                }
                 if let error { Text(error).font(.caption).foregroundStyle(AppTheme.fall) }
                 Section {
-                    Text("当前价相对 N 分钟前上涨或下跌达到阈值时提醒；两个方向独立重新武装。")
+                    Text(kind == .percentage
+                         ? "当前价相对 N 分钟前上涨或下跌达到阈值时提醒；两个方向独立重新武装。"
+                         : "当前价进入目标区间时提醒一次；离开目标区间后自动重新武装。")
                         .font(.caption).foregroundStyle(.secondary)
                 }
             }
@@ -93,7 +131,14 @@ private struct AddRuleView: View {
                 ToolbarItem(placement: .cancellationAction) { Button("取消") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("保存") {
-                        do { try model.addRule(symbol: symbol, windowMinutes: window, threshold: threshold); dismiss() }
+                        do {
+                            if kind == .percentage {
+                                try model.addRule(symbol: symbol, windowMinutes: window, threshold: threshold)
+                            } else {
+                                try model.addTargetRule(symbol: symbol, direction: targetDirection, targetPrice: targetPrice)
+                            }
+                            dismiss()
+                        }
                         catch { self.error = error.localizedDescription }
                     }
                 }

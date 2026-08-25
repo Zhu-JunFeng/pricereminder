@@ -13,6 +13,8 @@ data class PricePoint(
 }
 
 enum class TriggerDirection { RISE, FALL }
+enum class AlertRuleKind { PERCENTAGE, TARGET }
+enum class TargetDirection { ABOVE, BELOW }
 
 data class AlertRule(
     val id: String = UUID.randomUUID().toString(),
@@ -22,13 +24,23 @@ data class AlertRule(
     val enabled: Boolean = true,
     var riseTriggered: Boolean = false,
     var fallTriggered: Boolean = false,
+    val kind: AlertRuleKind = AlertRuleKind.PERCENTAGE,
+    val targetDirection: TargetDirection? = null,
+    val targetPriceText: String? = null,
+    var targetTriggered: Boolean = false,
 ) {
-    val threshold: BigDecimal = thresholdText.toBigDecimal()
+    val threshold: BigDecimal = thresholdText.toBigDecimalOrNull() ?: BigDecimal.ZERO
+    val targetPrice: BigDecimal? = targetPriceText?.toBigDecimalOrNull()
 
     init {
-        require(windowMinutes in 1..60) { "windowMinutes must be between 1 and 60" }
-        require(threshold >= BigDecimal("0.1") && threshold <= BigDecimal("100")) {
-            "thresholdPct must be between 0.1 and 100"
+        if (kind == AlertRuleKind.PERCENTAGE) {
+            require(windowMinutes in 1..60) { "windowMinutes must be between 1 and 60" }
+            require(threshold >= BigDecimal("0.1") && threshold <= BigDecimal("100")) {
+                "thresholdPct must be between 0.1 and 100"
+            }
+        } else {
+            require(targetDirection != null) { "targetDirection is required" }
+            require(targetPrice != null && targetPrice > BigDecimal.ZERO) { "targetPrice must be greater than zero" }
         }
     }
 }
@@ -36,10 +48,12 @@ data class AlertRule(
 data class AlertTrigger(
     val ruleId: String,
     val symbol: String,
+    val kind: AlertRuleKind,
     val direction: TriggerDirection,
-    val changePercent: BigDecimal,
+    val changePercent: BigDecimal?,
     val thresholdText: String,
     val windowMinutes: Int,
+    val targetPriceText: String?,
     val priceText: String,
     val baselinePriceText: String,
     val eventTime: Long,

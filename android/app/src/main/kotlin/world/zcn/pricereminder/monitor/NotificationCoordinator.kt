@@ -4,6 +4,7 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.Context
 import androidx.core.app.NotificationCompat
+import androidx.core.app.NotificationManagerCompat
 import world.zcn.pricereminder.R
 import world.zcn.pricereminder.core.AlertTrigger
 import java.math.RoundingMode
@@ -29,8 +30,12 @@ class NotificationCoordinator(private val context: Context) {
     fun alerts(symbol: String, triggers: List<AlertTrigger>) {
         if (triggers.isEmpty()) return
         val summary = triggers.joinToString("；") {
+            if (it.kind.name == "TARGET") {
+                val direction = if (it.direction.name == "RISE") "达到或高于" else "达到或低于"
+                return@joinToString "$direction 目标价 ${it.targetPriceText ?: "--"}"
+            }
             val direction = if (it.direction.name == "RISE") "上涨" else "下跌"
-            val change = it.changePercent.setScale(2, RoundingMode.HALF_UP).toPlainString()
+            val change = (it.changePercent ?: java.math.BigDecimal.ZERO).setScale(2, RoundingMode.HALF_UP).toPlainString()
             "${it.windowMinutes}分钟$direction $change%（阈值 ${it.thresholdText}%）"
         }
         manager.notify(("alert:$symbol:${triggers.first().eventTime}").hashCode(), NotificationCompat.Builder(context, ALERT_CHANNEL)
@@ -49,6 +54,14 @@ class NotificationCoordinator(private val context: Context) {
             .setContentText(detail)
             .setAutoCancel(true)
             .build())
+    }
+
+    fun notificationsEnabled(): Boolean = NotificationManagerCompat.from(context).areNotificationsEnabled()
+
+    fun test(): Boolean {
+        if (!notificationsEnabled()) return false
+        health("币价提醒测试", "系统通知可正常接收")
+        return true
     }
 
     companion object {

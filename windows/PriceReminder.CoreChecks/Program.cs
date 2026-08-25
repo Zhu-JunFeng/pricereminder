@@ -10,6 +10,7 @@ internal static class CoreChecks
             DirectionsRearmIndependently();
             MissingWindowDoesNotTrigger();
             ReplayReplacesSameSecond();
+            TargetPriceTriggersAndRearms();
             Console.WriteLine("PriceReminder Windows core checks passed");
             return 0;
         }
@@ -64,6 +65,30 @@ internal static class CoreChecks
         buffer.Add(new PricePoint("SOLUSDT", "101", 1_900, true));
         Expect(buffer.Points("SOLUSDT").Count == 1 && buffer.Latest("SOLUSDT")?.PriceText == "101",
             "same-second sample must keep the latest point");
+    }
+
+    private static void TargetPriceTriggersAndRearms()
+    {
+        var buffer = new PriceBuffer();
+        var rule = new AlertRule
+        {
+            Symbol = "BTCUSDT", Kind = AlertRuleKind.Target, WindowMinutes = 0, ThresholdText = "0",
+            TargetDirection = TargetDirection.Above, TargetPriceText = "105",
+        };
+        var current = new PricePoint("BTCUSDT", "104", 1_000);
+        buffer.Add(current);
+        Expect(RuleEngine.Evaluate(rule, current, buffer).Count == 0, "target should wait below threshold");
+        current = new PricePoint("BTCUSDT", "105", 2_000);
+        buffer.Add(current);
+        Expect(RuleEngine.Evaluate(rule, current, buffer).Single().Kind == AlertRuleKind.Target,
+            "equal target should trigger");
+        current = new PricePoint("BTCUSDT", "106", 3_000);
+        buffer.Add(current);
+        Expect(RuleEngine.Evaluate(rule, current, buffer).Count == 0, "target should not repeat");
+        current = new PricePoint("BTCUSDT", "104", 4_000);
+        buffer.Add(current);
+        RuleEngine.Evaluate(rule, current, buffer);
+        Expect(!rule.TargetTriggered, "target should rearm after leaving range");
     }
 
     private static void Expect(bool condition, string message)
