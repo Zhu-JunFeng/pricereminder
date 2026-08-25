@@ -31,7 +31,7 @@ jobs:
         run: dotnet publish windows/PriceReminder.Windows.csproj --configuration Release --runtime win-x64 --self-contained true --output dist/windows
       - name: Package
         shell: pwsh
-        run: Compress-Archive -Path dist/windows/* -DestinationPath dist/PriceReminder-Windows-x64.zip
+        run: Compress-Archive -Path dist/windows/* -DestinationPath dist/PriceReminder-Windows-x64.zip -Force
       - uses: actions/upload-artifact@v4
         with:
           name: PriceReminder-Windows-x64
