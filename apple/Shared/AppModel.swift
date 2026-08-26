@@ -1,7 +1,7 @@
 import Foundation
 import PriceCore
 import SwiftUI
-import UserNotifications
+@preconcurrency import UserNotifications
 
 #if os(iOS)
 @preconcurrency import ActivityKit
