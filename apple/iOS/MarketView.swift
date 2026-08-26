@@ -93,14 +93,14 @@ struct MarketView: View {
 
 struct ContractPickerView: View {
     @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var model: AppModel
     @State private var query = ""
     let selected: String
     let contracts: [Contract]
     let onSelect: (String) -> Void
 
     private var filtered: [Contract] {
-        let normalized = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        return normalized.isEmpty ? contracts : contracts.filter { $0.symbol.localizedCaseInsensitiveContains(normalized) }
+        ContractOrdering.ordered(contracts, recentSymbols: model.recentSymbols, query: query)
     }
 
     var body: some View {
@@ -128,7 +128,9 @@ struct ContractPickerView: View {
 
                 List(filtered) { contract in
                     Button {
-                        onSelect(contract.symbol); dismiss()
+                        model.recordRecentSymbol(contract.symbol)
+                        onSelect(contract.symbol)
+                        dismiss()
                     } label: {
                         HStack {
                             VStack(alignment: .leading) {

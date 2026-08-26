@@ -1,0 +1,162 @@
+name: Build and Release
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+      build_number: ${{ steps.version.outputs.build_number }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: version
+        name: Select next version
+        shell: bash
+        run: |
+          latest=$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | head -1)
+          if [[ -z "$latest" ]]; then
+            version="0.1.4"
+          else
+            version="${latest#v}"
+            IFS=. read -r major minor patch <<< "$version"
+            version="$major.$minor.$((patch + 1))"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=v$version" >> "$GITHUB_OUTPUT"
+          echo "build_number=$((10000 + GITHUB_RUN_NUMBER))" >> "$GITHUB_OUTPUT"
+
+  server:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24.x"
+          cache-dependency-path: server/go.sum
+      - name: Test server and Go rule core
+        working-directory: server
+        run: go test ./...
+
+  android:
+    needs: version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+      - uses: android-actions/setup-android@v3
+      - name: Test and build Android APK
+        working-directory: android
+        env:
+          PRICE_REMINDER_VERSION: ${{ needs.version.outputs.version }}
+          PRICE_REMINDER_VERSION_CODE: ${{ needs.version.outputs.build_number }}
+        run: ./gradlew :rule-core:test testDebugUnitTest assembleDebug
+      - name: Name Android package
+        run: cp android/app/build/outputs/apk/debug/app-debug.apk "PriceReminder-Android-${{ needs.version.outputs.version }}.apk"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-package
+          path: PriceReminder-Android-*.apk
+          if-no-files-found: error
+
+  apple:
+    needs: version
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check Swift rule core
+        working-directory: apple/PriceCore
+        run: swift run PriceCoreCheck
+      - name: Build iPhone simulator app
+        working-directory: apple
+        run: >-
+          xcodebuild -project PriceReminder.xcodeproj -scheme PriceReminderiOS
+          -configuration Release -destination 'generic/platform=iOS Simulator'
+          -derivedDataPath build/DerivedData-iOS CODE_SIGNING_ALLOWED=NO
+          MARKETING_VERSION=${{ needs.version.outputs.version }}
+          CURRENT_PROJECT_VERSION=${{ needs.version.outputs.build_number }} build
+      - name: Build macOS app
+        working-directory: apple
+        run: >-
+          xcodebuild -project PriceReminder.xcodeproj -scheme PriceReminderMac
+          -configuration Release -derivedDataPath build/DerivedData-macOS
+          CODE_SIGNING_ALLOWED=NO MARKETING_VERSION=${{ needs.version.outputs.version }}
+          CURRENT_PROJECT_VERSION=${{ needs.version.outputs.build_number }} build
+      - name: Package macOS DMG
+        shell: bash
+        run: |
+          app="apple/build/DerivedData-macOS/Build/Products/Release/PriceReminderMac.app"
+          codesign --force --deep --sign - "$app"
+          mkdir -p dist/dmg
+          cp -R "$app" "dist/dmg/币价提醒.app"
+          ln -s /Applications dist/dmg/Applications
+          hdiutil create -volname "币价提醒" -srcfolder dist/dmg -ov -format UDZO "PriceReminder-macOS-${{ needs.version.outputs.version }}.dmg"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-package
+          path: PriceReminder-macOS-*.dmg
+          if-no-files-found: error
+
+  windows:
+    needs: version
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+      - name: Check Windows rule core
+        run: dotnet run --project windows/PriceReminder.CoreChecks/PriceReminder.CoreChecks.csproj --configuration Release
+      - name: Publish self-contained Windows app
+        run: >-
+          dotnet publish windows/PriceReminder.Windows.csproj --configuration Release
+          --runtime win-x64 --self-contained true --output dist/windows
+          -p:Version=${{ needs.version.outputs.version }}
+      - name: Package Windows app
+        shell: pwsh
+        run: Compress-Archive -Path dist/windows/* -DestinationPath "PriceReminder-Windows-x64-${{ needs.version.outputs.version }}.zip"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-package
+          path: PriceReminder-Windows-*.zip
+          if-no-files-found: error
+
+  release:
+    if: github.event_name != 'pull_request'
+    needs: [version, server, android, apple, windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Create checksums
+        working-directory: dist
+        run: sha256sum PriceReminder-* > "SHA256SUMS-${{ needs.version.outputs.version }}.txt"
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          gh release create "${{ needs.version.outputs.tag }}" dist/*
+          --repo "${{ github.repository }}"
+          --target "${{ github.sha }}"
+          --title "PriceReminder ${{ needs.version.outputs.version }}"
+          --generate-notes

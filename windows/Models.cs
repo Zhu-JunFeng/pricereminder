@@ -8,6 +8,26 @@ internal sealed record Contract(
     [property: JsonPropertyName("quoteAsset")] string QuoteAsset,
     [property: JsonPropertyName("tickSize")] string TickSize);
 
+internal static class ContractOrdering
+{
+    public static IReadOnlyList<Contract> Ordered(
+        IEnumerable<Contract> contracts, IEnumerable<string> recentSymbols, string query = "")
+    {
+        var normalized = query.Trim();
+        var ranks = recentSymbols.Take(3).Select((symbol, index) => (symbol, index))
+            .GroupBy(item => item.symbol, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(group => group.Key, group => group.First().index, StringComparer.OrdinalIgnoreCase);
+        return contracts.Select((contract, index) => (contract, index))
+            .Where(item => normalized.Length == 0
+                || item.contract.Symbol.Contains(normalized, StringComparison.OrdinalIgnoreCase)
+                || item.contract.BaseAsset.Contains(normalized, StringComparison.OrdinalIgnoreCase)
+                || item.contract.QuoteAsset.Contains(normalized, StringComparison.OrdinalIgnoreCase))
+            .OrderBy(item => ranks.TryGetValue(item.contract.Symbol, out var rank) ? rank : int.MaxValue)
+            .ThenBy(item => item.index)
+            .Select(item => item.contract).ToList();
+    }
+}
+
 internal sealed class AlertRule
 {
     public Guid Id { get; set; } = Guid.NewGuid();
@@ -67,6 +87,7 @@ internal sealed class PersistedState
 {
     public string PrimarySymbol { get; set; } = "BTCUSDT";
     public List<string> TraySymbols { get; set; } = ["BTCUSDT"];
+    public List<string> RecentSymbols { get; set; } = [];
     public List<AlertRule> Rules { get; set; } = [];
     public List<TriggerHistory> History { get; set; } = [];
     public Dictionary<string, List<PricePoint>> Prices { get; set; } = [];

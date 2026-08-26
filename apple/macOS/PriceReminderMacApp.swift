@@ -96,6 +96,8 @@ struct MacSettingsView: View {
     @State private var targetPrice = ""
     @State private var ruleError: String?
     @State private var testResult: String?
+    @State private var showingRuleContracts = false
+    @State private var editingRuleID: UUID?
 
     var body: some View {
         TabView {
@@ -143,9 +145,18 @@ struct MacSettingsView: View {
                 .pickerStyle(.segmented)
 
                 HStack(spacing: 10) {
-                    Picker("合约", selection: $ruleSymbol) {
-                        ForEach(model.contracts) { contract in
-                            Text(contract.symbol).tag(contract.symbol)
+                    Button { showingRuleContracts.toggle() } label: {
+                        HStack(spacing: 6) {
+                            Text(ruleSymbol)
+                            Image(systemName: "chevron.up.chevron.down")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .popover(isPresented: $showingRuleContracts) {
+                        MacContractPicker(selected: ruleSymbol) {
+                            ruleSymbol = $0
+                            showingRuleContracts = false
                         }
                     }
                     .frame(maxWidth: 220)
@@ -163,8 +174,11 @@ struct MacSettingsView: View {
                         TextField("目标价格", text: $targetPrice)
                             .frame(width: 105)
                     }
-                    Button("添加") { addRule() }
+                    Button(editingRuleID == nil ? "添加" : "保存修改") { saveRule() }
                         .buttonStyle(.borderedProminent)
+                    if editingRuleID != nil {
+                        Button("取消") { cancelEditing() }
+                    }
                 }
 
                 if let ruleError {
@@ -187,6 +201,11 @@ struct MacSettingsView: View {
                                 set: { model.setRuleEnabled(id: rule.id, enabled: $0) }
                             ))
                             .labelsHidden()
+                            Button { beginEditing(rule) } label: {
+                                Image(systemName: "pencil")
+                            }
+                            .buttonStyle(.borderless)
+                            .help("编辑提醒")
                             Button(role: .destructive) { model.deleteRule(id: rule.id) } label: {
                                 Image(systemName: "trash")
                             }
@@ -242,18 +261,19 @@ struct MacSettingsView: View {
     }
 
     private var filteredContracts: [Contract] {
-        let query = contractQuery.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !query.isEmpty else { return model.contracts }
-        return model.contracts.filter {
-            $0.symbol.localizedCaseInsensitiveContains(query)
-                || $0.baseAsset.localizedCaseInsensitiveContains(query)
-                || $0.quoteAsset.localizedCaseInsensitiveContains(query)
-        }
+        model.orderedContracts(query: contractQuery)
     }
 
-    private func addRule() {
+    private func saveRule() {
         do {
-            if ruleKind == .percentage {
+            if let editingRuleID {
+                try model.updateRule(
+                    id: editingRuleID, symbol: ruleSymbol, kind: ruleKind,
+                    windowMinutes: ruleWindow, threshold: ruleThreshold,
+                    direction: targetDirection, targetPrice: targetPrice
+                )
+                cancelEditing()
+            } else if ruleKind == .percentage {
                 try model.addRule(symbol: ruleSymbol, windowMinutes: ruleWindow, threshold: ruleThreshold)
             } else {
                 try model.addTargetRule(symbol: ruleSymbol, direction: targetDirection, targetPrice: targetPrice)
@@ -262,6 +282,28 @@ struct MacSettingsView: View {
         } catch {
             ruleError = error.localizedDescription
         }
+    }
+
+    private func beginEditing(_ rule: AlertRule) {
+        editingRuleID = rule.id
+        ruleSymbol = rule.symbol
+        ruleKind = rule.kind
+        ruleWindow = rule.windowMinutes == 0 ? 5 : rule.windowMinutes
+        ruleThreshold = rule.thresholdText
+        targetDirection = rule.targetDirection ?? .above
+        targetPrice = rule.targetPriceText ?? ""
+        ruleError = nil
+    }
+
+    private func cancelEditing() {
+        editingRuleID = nil
+        ruleSymbol = model.primarySymbol
+        ruleWindow = 5
+        ruleThreshold = "3"
+        ruleKind = .percentage
+        targetDirection = .above
+        targetPrice = ""
+        ruleError = nil
     }
 
     private func ruleDescription(_ rule: AlertRule) -> String {
@@ -274,6 +316,49 @@ struct MacSettingsView: View {
 
     private var lastReceivedText: String {
         model.lastPriceReceivedAt?.formatted(date: .omitted, time: .standard) ?? "尚未收到"
+    }
+}
+
+private struct MacContractPicker: View {
+    @EnvironmentObject private var model: AppModel
+    @State private var query = ""
+    let selected: String
+    let onSelect: (String) -> Void
+
+    var body: some View {
+        VStack(spacing: 10) {
+            TextField("输入合约代码，如 BTC", text: $query)
+                .textFieldStyle(.roundedBorder)
+            ScrollView {
+                LazyVStack(spacing: 2) {
+                    ForEach(model.orderedContracts(query: query)) { contract in
+                        Button {
+                            model.recordRecentSymbol(contract.symbol)
+                            onSelect(contract.symbol)
+                        } label: {
+                            HStack {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(contract.symbol).foregroundStyle(.primary)
+                                    Text("\(contract.baseAsset) / \(contract.quoteAsset)")
+                                        .font(.caption).foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                                if contract.symbol == selected {
+                                    Image(systemName: "checkmark").foregroundStyle(AppTheme.primary)
+                                }
+                            }
+                            .contentShape(Rectangle())
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 6)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+            .frame(height: 250)
+        }
+        .padding(12)
+        .frame(width: 300)
     }
 }
 

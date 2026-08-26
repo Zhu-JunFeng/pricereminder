@@ -4,6 +4,7 @@ import SwiftUI
 struct RulesView: View {
     @EnvironmentObject private var model: AppModel
     @State private var showingAdd = false
+    @State private var editingRule: AlertRule?
 
     var body: some View {
         List {
@@ -23,6 +24,11 @@ struct RulesView: View {
                                 get: { rule.isEnabled },
                                 set: { model.setRuleEnabled(id: rule.id, enabled: $0) }
                             )).labelsHidden()
+                            Button { editingRule = rule } label: {
+                                Image(systemName: "pencil")
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel("编辑 \(rule.symbol) 提醒")
                         }
                         .swipeActions { Button("删除", role: .destructive) { model.deleteRule(id: rule.id) } }
                     }
@@ -53,7 +59,8 @@ struct RulesView: View {
         }
         .navigationTitle("价格预警")
         .toolbar { Button { showingAdd = true } label: { Label("添加", systemImage: "plus") } }
-        .sheet(isPresented: $showingAdd) { AddRuleView() }
+        .sheet(isPresented: $showingAdd) { RuleEditorView() }
+        .sheet(item: $editingRule) { RuleEditorView(rule: $0) }
     }
 
     private func ruleDescription(_ rule: AlertRule) -> String {
@@ -77,7 +84,7 @@ struct RulesView: View {
     }
 }
 
-private struct AddRuleView: View {
+private struct RuleEditorView: View {
     @EnvironmentObject private var model: AppModel
     @Environment(\.dismiss) private var dismiss
     @State private var symbol = "BTCUSDT"
@@ -88,6 +95,17 @@ private struct AddRuleView: View {
     @State private var targetPrice = ""
     @State private var error: String?
     @State private var showingContracts = false
+    private let editingID: UUID?
+
+    init(rule: AlertRule? = nil) {
+        editingID = rule?.id
+        _symbol = State(initialValue: rule?.symbol ?? "BTCUSDT")
+        _window = State(initialValue: rule?.windowMinutes ?? 5)
+        _threshold = State(initialValue: rule?.thresholdText ?? "3")
+        _kind = State(initialValue: rule?.kind ?? .percentage)
+        _targetDirection = State(initialValue: rule?.targetDirection ?? .above)
+        _targetPrice = State(initialValue: rule?.targetPriceText ?? "")
+    }
 
     var body: some View {
         NavigationStack {
@@ -126,13 +144,19 @@ private struct AddRuleView: View {
                         .font(.caption).foregroundStyle(.secondary)
                 }
             }
-            .navigationTitle("添加预警")
+            .navigationTitle(editingID == nil ? "添加预警" : "编辑预警")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("取消") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("保存") {
                         do {
-                            if kind == .percentage {
+                            if let editingID {
+                                try model.updateRule(
+                                    id: editingID, symbol: symbol, kind: kind,
+                                    windowMinutes: window, threshold: threshold,
+                                    direction: targetDirection, targetPrice: targetPrice
+                                )
+                            } else if kind == .percentage {
                                 try model.addRule(symbol: symbol, windowMinutes: window, threshold: threshold)
                             } else {
                                 try model.addTargetRule(symbol: symbol, direction: targetDirection, targetPrice: targetPrice)
@@ -143,7 +167,9 @@ private struct AddRuleView: View {
                     }
                 }
             }
-            .onAppear { symbol = model.primarySymbol }
+            .onAppear {
+                if editingID == nil { symbol = model.primarySymbol }
+            }
             .sheet(isPresented: $showingContracts) {
                 ContractPickerView(selected: symbol, contracts: model.contracts) { symbol = $0 }
             }

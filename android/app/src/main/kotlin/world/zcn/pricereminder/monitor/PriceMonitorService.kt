@@ -228,7 +228,7 @@ class PriceMonitorService : Service() {
                     item.targetDirection?.let { TargetDirection.valueOf(it.uppercase()) },
                     item.targetPriceText, item.targetTriggered,
                 )
-                if (created.kind == AlertRuleKind.TARGET && created.enabled) {
+                if (created.enabled) {
                     buffer.latest(created.symbol)?.let { RuleEngine.initialize(created, it, buffer) }
                 }
                 activeRules[item.id] = created

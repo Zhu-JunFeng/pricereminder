@@ -24,6 +24,11 @@ final class AppModel: ObservableObject {
     @Published private(set) var lastConnectionError: String?
     @Published var primarySymbol = UserDefaults.standard.string(forKey: "primarySymbol") ?? "BTCUSDT"
     @Published var menuSymbols: [String] = UserDefaults.standard.stringArray(forKey: "menuSymbols") ?? ["BTCUSDT"]
+    @Published private(set) var recentSymbols: [String] = {
+        let defaults = UserDefaults.standard
+        return defaults.stringArray(forKey: "recentSymbols")
+            ?? [defaults.string(forKey: "primarySymbol") ?? "BTCUSDT"]
+    }()
 
     private let market: BinanceMarketClient
     private let stream: PriceStream
@@ -135,6 +140,7 @@ final class AppModel: ObservableObject {
             throw PriceCoreError.duplicateRule
         }
         rules.append(candidate)
+        recordRecentSymbol(candidate.symbol)
         LocalPersistence.saveRules(rules)
         rulesDidChange()
     }
@@ -152,6 +158,7 @@ final class AppModel: ObservableObject {
             _ = RuleEngine.initialize(rule: &candidate, current: current, buffer: buffer)
         }
         rules.append(candidate)
+        recordRecentSymbol(candidate.symbol)
         LocalPersistence.saveRules(rules)
         rulesDidChange()
     }
@@ -175,8 +182,44 @@ final class AppModel: ObservableObject {
         rulesDidChange()
     }
 
+    func updateRule(
+        id: UUID, symbol: String, kind: AlertRuleKind, windowMinutes: Int, threshold: String,
+        direction: TargetDirection, targetPrice: String
+    ) throws {
+        guard let index = rules.firstIndex(where: { $0.id == id }) else { return }
+        let existing = rules[index]
+        var candidate: AlertRule
+        if kind == .percentage {
+            candidate = try AlertRule(
+                id: id, symbol: symbol, windowMinutes: windowMinutes, thresholdText: threshold,
+                isEnabled: existing.isEnabled
+            )
+            guard !rules.contains(where: {
+                $0.id != id && $0.kind == .percentage && $0.symbol == candidate.symbol
+                    && $0.windowMinutes == candidate.windowMinutes && $0.threshold == candidate.threshold
+            }) else { throw PriceCoreError.duplicateRule }
+        } else {
+            candidate = try AlertRule(
+                id: id, symbol: symbol, targetDirection: direction, targetPriceText: targetPrice,
+                isEnabled: existing.isEnabled
+            )
+            guard !rules.contains(where: {
+                $0.id != id && $0.kind == .target && $0.symbol == candidate.symbol
+                    && $0.targetDirection == candidate.targetDirection && $0.targetPrice == candidate.targetPrice
+            }) else { throw PriceCoreError.duplicateRule }
+        }
+        if candidate.isEnabled, let current = prices[candidate.symbol] {
+            _ = RuleEngine.initialize(rule: &candidate, current: current, buffer: buffer)
+        }
+        rules[index] = candidate
+        recordRecentSymbol(candidate.symbol)
+        LocalPersistence.saveRules(rules)
+        rulesDidChange()
+    }
+
     func selectPrimary(_ symbol: String) {
         primarySymbol = symbol
+        recordRecentSymbol(symbol)
         UserDefaults.standard.set(symbol, forKey: "primarySymbol")
         syncSubscriptionsIfMonitoring()
         #if os(iOS)
@@ -185,9 +228,23 @@ final class AppModel: ObservableObject {
     }
 
     func setMenuSymbols(_ symbols: [String]) {
+        let previous = Set(menuSymbols.map { $0.uppercased() })
         menuSymbols = Array(symbols.prefix(3))
+        menuSymbols.filter { !previous.contains($0.uppercased()) }.forEach { recordRecentSymbol($0) }
         UserDefaults.standard.set(menuSymbols, forKey: "menuSymbols")
         syncSubscriptionsIfMonitoring()
+    }
+
+    func recordRecentSymbol(_ symbol: String) {
+        let normalized = symbol.uppercased()
+        recentSymbols.removeAll { $0.caseInsensitiveCompare(normalized) == .orderedSame }
+        recentSymbols.insert(normalized, at: 0)
+        recentSymbols = Array(recentSymbols.prefix(3))
+        UserDefaults.standard.set(recentSymbols, forKey: "recentSymbols")
+    }
+
+    func orderedContracts(query: String = "") -> [Contract] {
+        ContractOrdering.ordered(contracts, recentSymbols: recentSymbols, query: query)
     }
 
     #if os(iOS)

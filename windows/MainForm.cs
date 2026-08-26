@@ -31,6 +31,7 @@ internal sealed class MainForm : Form
     private readonly ListView rulesList = new();
     private readonly ListView historyList = new();
     private readonly CheckedListBox traySymbols = new();
+    private readonly TextBox traySearch = new();
     private readonly Label contractsError = new();
     private readonly CheckBox startupCheck = new();
     private readonly Label diagnosticsLabel = new();
@@ -38,8 +39,12 @@ internal sealed class MainForm : Form
     private Panel? ruleThresholdField;
     private Panel? targetDirectionField;
     private Panel? targetPriceField;
+    private readonly Button saveRuleButton = new() { Text = "添加规则", AutoSize = true };
+    private readonly Button cancelRuleEditButton = new() { Text = "取消", AutoSize = true, Visible = false };
     private IReadOnlyList<Contract> contracts = [];
     private bool updatingTraySymbols;
+    private bool updatingContractCombos;
+    private Guid? editingRuleId;
 
     public event Action? TestNotificationRequested;
 
@@ -78,9 +83,7 @@ internal sealed class MainForm : Form
     {
         contracts = values;
         contractsError.Visible = false;
-        var symbols = values.Select(item => item.Symbol).ToArray();
-        ConfigureContractCombo(primarySymbol, symbols, store.State.PrimarySymbol);
-        ConfigureContractCombo(ruleSymbol, symbols, store.State.PrimarySymbol);
+        RefreshContractCombos();
         UpdateTraySymbolList();
     }
 
@@ -166,6 +169,7 @@ internal sealed class MainForm : Form
         primarySymbol.Margin = new Padding(0, 18, 12, 22);
         primarySymbol.SelectedIndexChanged += (_, _) => SelectPrimary();
         primarySymbol.KeyDown += (_, eventArgs) => { if (eventArgs.KeyCode == Keys.Enter) SelectPrimary(); };
+        primarySymbol.DropDown += (_, _) => RefreshContractCombos();
         layout.Controls.Add(primarySymbol, 0, 1);
         sourceLabel.AutoSize = false;
         sourceLabel.Size = new Size(90, 28);
@@ -253,22 +257,36 @@ internal sealed class MainForm : Form
         targetDirection.Items.AddRange(["达到或高于", "达到或低于"]);
         targetDirection.SelectedIndex = 0;
         targetDirection.Width = 112;
-        var addButton = new Button { Text = "添加规则", AutoSize = true };
-        StylePrimaryButton(addButton);
-        addButton.Click += (_, _) => AddRule();
+        StylePrimaryButton(saveRuleButton);
+        saveRuleButton.Click += (_, _) => SaveRule();
+        StyleSecondaryButton(cancelRuleEditButton);
+        cancelRuleEditButton.Click += (_, _) => CancelRuleEditing();
         ruleWindowField = Field("分钟", ruleWindow);
         ruleThresholdField = Field("变化 %", ruleThreshold);
         targetDirectionField = Field("条件", targetDirection);
         targetPriceField = Field("目标价格", targetPrice);
         addRow.Controls.AddRange(new Control[] {
             Field("类型", ruleKind), Field("合约", ruleSymbol), ruleWindowField, ruleThresholdField,
-            targetDirectionField, targetPriceField, addButton,
+            targetDirectionField, targetPriceField, saveRuleButton, cancelRuleEditButton,
         });
         ruleKind.SelectedIndexChanged += (_, _) => UpdateRuleFields();
+        ruleSymbol.SelectionChangeCommitted += (_, _) =>
+        {
+            var symbol = ruleSymbol.Text.Trim().ToUpperInvariant();
+            if (contracts.Any(item => item.Symbol == symbol)) store.RecordRecentSymbol(symbol);
+        };
+        ruleSymbol.DropDown += (_, _) => RefreshContractCombos();
         UpdateRuleFields();
         layout.Controls.Add(addRow, 0, 1);
 
         ConfigureList(rulesList, ["合约", "规则", "状态"], [145, 520, 100]);
+        rulesList.SmallImageList = new ImageList { ImageSize = new Size(16, 16), ColorDepth = ColorDepth.Depth32Bit };
+        rulesList.SmallImageList.Images.Add(CreateEditIcon());
+        rulesList.MouseClick += (_, eventArgs) =>
+        {
+            var item = rulesList.GetItemAt(eventArgs.X, eventArgs.Y);
+            if (item is not null && eventArgs.X - item.Bounds.Left <= 28) BeginRuleEditing(item);
+        };
         rulesList.DoubleClick += (_, _) => ToggleSelectedRule();
         rulesList.KeyDown += (_, eventArgs) =>
         {
@@ -277,6 +295,7 @@ internal sealed class MainForm : Form
         };
         var rulesMenu = new ContextMenuStrip();
         rulesMenu.Items.Add("启用 / 暂停", null, (_, _) => ToggleSelectedRule());
+        rulesMenu.Items.Add("编辑", null, (_, _) => BeginSelectedRuleEditing());
         rulesMenu.Items.Add("删除", null, (_, _) => DeleteSelectedRule());
         rulesList.ContextMenuStrip = rulesMenu;
         layout.Controls.Add(ListSection("已配置规则", rulesList), 0, 2);
@@ -292,10 +311,11 @@ internal sealed class MainForm : Form
         var page = Page("设置");
         var layout = new TableLayoutPanel
         {
-            Dock = DockStyle.Fill, Padding = new Padding(28, 24, 28, 24), ColumnCount = 2, RowCount = 4,
+            Dock = DockStyle.Fill, Padding = new Padding(28, 24, 28, 24), ColumnCount = 2, RowCount = 5,
         };
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 54));
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 46));
+        layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
@@ -308,6 +328,11 @@ internal sealed class MainForm : Form
         hint.Margin = new Padding(0, 4, 0, 16);
         layout.Controls.Add(hint, 0, 1);
         layout.SetColumnSpan(hint, 2);
+        traySearch.PlaceholderText = "输入合约代码搜索";
+        traySearch.Dock = DockStyle.Fill;
+        traySearch.Margin = new Padding(0, 0, 0, 12);
+        traySearch.TextChanged += (_, _) => UpdateTraySymbolList();
+        layout.Controls.Add(traySearch, 0, 2);
         traySymbols.Dock = DockStyle.Fill;
         traySymbols.CheckOnClick = true;
         traySymbols.BorderStyle = BorderStyle.None;
@@ -315,7 +340,7 @@ internal sealed class MainForm : Form
         traySymbols.ForeColor = Ink;
         traySymbols.Padding = new Padding(8);
         traySymbols.ItemCheck += TraySymbolChecked;
-        layout.Controls.Add(traySymbols, 0, 2);
+        layout.Controls.Add(traySymbols, 0, 3);
 
         var details = new Panel { Dock = DockStyle.Fill, BackColor = Surface, Padding = new Padding(18), Margin = new Padding(18, 0, 0, 0) };
         var detailFlow = new FlowLayoutPanel
@@ -346,11 +371,12 @@ internal sealed class MainForm : Form
         detailFlow.Controls.Add(testButton);
         details.Controls.Add(detailFlow);
         layout.Controls.Add(details, 1, 2);
+        layout.SetRowSpan(details, 2);
         var source = TextLabel("行情来源：币安 U 本位永续最新成交价；终端不通时使用服务端转发的同一币安行情。", 9, FontStyle.Regular);
         source.ForeColor = Muted;
         source.Margin = new Padding(0, 18, 0, 0);
         source.MaximumSize = new Size(650, 0);
-        layout.Controls.Add(source, 0, 3);
+        layout.Controls.Add(source, 0, 4);
         layout.SetColumnSpan(source, 2);
         page.Controls.Add(layout);
         return page;
@@ -358,14 +384,17 @@ internal sealed class MainForm : Form
 
     private void SelectPrimary()
     {
+        if (updatingContractCombos) return;
         var symbol = primarySymbol.Text.Trim().ToUpperInvariant();
         if (!contracts.Any(item => item.Symbol == symbol)) return;
         store.State.PrimarySymbol = symbol;
+        store.RecordRecentSymbol(symbol);
+        RefreshContractCombos();
         store.Save();
         monitor.SubscriptionsChanged();
     }
 
-    private void AddRule()
+    private void SaveRule()
     {
         var symbol = ruleSymbol.Text.Trim().ToUpperInvariant();
         if (!contracts.Any(item => item.Symbol == symbol))
@@ -377,15 +406,16 @@ internal sealed class MainForm : Form
         var threshold = ruleThreshold.Value.ToString("0.0", CultureInfo.InvariantCulture);
         var target = targetPrice.Value.ToString("0.########", CultureInfo.InvariantCulture);
         var targetDirectionValue = targetDirection.SelectedIndex == 0 ? TargetDirection.Above : TargetDirection.Below;
-        if (store.State.Rules.Count >= 50 || store.State.Rules.Any(rule => isTarget
+        if ((editingRuleId is null && store.State.Rules.Count >= 50) || store.State.Rules.Any(rule => rule.Id != editingRuleId && (isTarget
             ? rule.Kind == AlertRuleKind.Target && rule.Symbol == symbol && rule.TargetDirection == targetDirectionValue && rule.TargetPriceText == target
-            : rule.Kind == AlertRuleKind.Percentage && rule.Symbol == symbol && rule.WindowMinutes == (int)ruleWindow.Value && rule.ThresholdText == threshold))
+            : rule.Kind == AlertRuleKind.Percentage && rule.Symbol == symbol && rule.WindowMinutes == (int)ruleWindow.Value && rule.ThresholdText == threshold)))
         {
             MessageBox.Show(this, "规则已存在，或已达到 50 条上限。", "无法添加规则", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             return;
         }
         var created = new AlertRule
         {
+            Id = editingRuleId ?? Guid.NewGuid(),
             Symbol = symbol,
             Kind = isTarget ? AlertRuleKind.Target : AlertRuleKind.Percentage,
             WindowMinutes = isTarget ? 0 : (int)ruleWindow.Value,
@@ -393,11 +423,56 @@ internal sealed class MainForm : Form
             TargetDirection = isTarget ? targetDirectionValue : null,
             TargetPriceText = isTarget ? target : null,
         };
-        monitor.InitializeRule(created);
-        store.State.Rules.Add(created);
+        if (editingRuleId is { } editingId)
+        {
+            var index = store.State.Rules.FindIndex(rule => rule.Id == editingId);
+            if (index < 0) return;
+            created.Enabled = store.State.Rules[index].Enabled;
+            if (created.Enabled) monitor.InitializeRule(created);
+            store.State.Rules[index] = created;
+        }
+        else
+        {
+            monitor.InitializeRule(created);
+            store.State.Rules.Add(created);
+        }
+        store.RecordRecentSymbol(symbol);
         store.Save();
         RefreshRules();
+        CancelRuleEditing();
         monitor.SubscriptionsChanged();
+    }
+
+    private void BeginSelectedRuleEditing()
+    {
+        if (rulesList.SelectedItems.Count > 0) BeginRuleEditing(rulesList.SelectedItems[0]);
+    }
+
+    private void BeginRuleEditing(ListViewItem item)
+    {
+        if (item.Tag is not Guid id) return;
+        var rule = store.State.Rules.First(value => value.Id == id);
+        editingRuleId = id;
+        ruleSymbol.Text = rule.Symbol;
+        ruleKind.SelectedIndex = rule.Kind == AlertRuleKind.Target ? 1 : 0;
+        ruleWindow.Value = Math.Clamp(rule.WindowMinutes == 0 ? 5 : rule.WindowMinutes, 1, 60);
+        ruleThreshold.Value = Math.Clamp(rule.Threshold, ruleThreshold.Minimum, ruleThreshold.Maximum);
+        targetDirection.SelectedIndex = rule.TargetDirection == TargetDirection.Below ? 1 : 0;
+        if (rule.TargetPrice is { } target) targetPrice.Value = Math.Clamp(target, targetPrice.Minimum, targetPrice.Maximum);
+        saveRuleButton.Text = "保存修改";
+        cancelRuleEditButton.Visible = true;
+    }
+
+    private void CancelRuleEditing()
+    {
+        editingRuleId = null;
+        ruleSymbol.Text = store.State.PrimarySymbol;
+        ruleKind.SelectedIndex = 0;
+        ruleWindow.Value = 5;
+        ruleThreshold.Value = 3;
+        targetDirection.SelectedIndex = 0;
+        saveRuleButton.Text = "添加规则";
+        cancelRuleEditButton.Visible = false;
     }
 
     private void ToggleSelectedRule()
@@ -435,7 +510,7 @@ internal sealed class MainForm : Form
                     ? $"{(rule.TargetDirection == TargetDirection.Above ? "达到或高于" : "达到或低于")} {rule.TargetPriceText}"
                     : $"{rule.WindowMinutes} 分钟内上涨或下跌 ≥ {rule.ThresholdText}%",
                 rule.Enabled ? "已启用" : "已暂停",
-            }) { Tag = rule.Id, ForeColor = rule.Enabled ? Ink : Muted });
+            }) { Tag = rule.Id, ForeColor = rule.Enabled ? Ink : Muted, ImageIndex = 0 });
         }
         rulesList.EndUpdate();
     }
@@ -453,7 +528,7 @@ internal sealed class MainForm : Form
     {
         updatingTraySymbols = true;
         traySymbols.Items.Clear();
-        foreach (var contract in contracts)
+        foreach (var contract in ContractOrdering.Ordered(contracts, store.State.RecentSymbols, traySearch.Text))
             traySymbols.Items.Add(contract.Symbol, store.State.TraySymbols.Contains(contract.Symbol, StringComparer.OrdinalIgnoreCase));
         updatingTraySymbols = false;
     }
@@ -473,11 +548,13 @@ internal sealed class MainForm : Form
                 return;
             }
             selected.Add(symbol);
+            store.RecordRecentSymbol(symbol);
         }
         else selected.Remove(symbol);
         store.State.TraySymbols = selected.Order(StringComparer.OrdinalIgnoreCase).ToList();
         store.Save();
         monitor.SubscriptionsChanged();
+        BeginInvoke((Action)UpdateTraySymbolList);
     }
 
     private static TabPage Page(string title) => new(title) { BackColor = Color.White, ForeColor = Ink };
@@ -520,6 +597,17 @@ internal sealed class MainForm : Form
         for (var index = 0; index < columns.Length; index++) list.Columns.Add(columns[index], widths[index]);
     }
 
+    private void RefreshContractCombos()
+    {
+        updatingContractCombos = true;
+        var primary = primarySymbol.Text.Length == 0 ? store.State.PrimarySymbol : primarySymbol.Text;
+        var rule = ruleSymbol.Text.Length == 0 ? store.State.PrimarySymbol : ruleSymbol.Text;
+        var symbols = ContractOrdering.Ordered(contracts, store.State.RecentSymbols).Select(item => item.Symbol).ToArray();
+        ConfigureContractCombo(primarySymbol, symbols, primary);
+        ConfigureContractCombo(ruleSymbol, symbols, rule);
+        updatingContractCombos = false;
+    }
+
     private static void ConfigureContractCombo(ComboBox combo, string[] symbols, string selected)
     {
         combo.BeginUpdate();
@@ -529,6 +617,18 @@ internal sealed class MainForm : Form
         combo.AutoCompleteSource = AutoCompleteSource.ListItems;
         combo.Text = selected;
         combo.EndUpdate();
+    }
+
+    private static Bitmap CreateEditIcon()
+    {
+        var bitmap = new Bitmap(16, 16);
+        using var graphics = Graphics.FromImage(bitmap);
+        graphics.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+        using var pen = new Pen(Muted, 2.2f) { StartCap = System.Drawing.Drawing2D.LineCap.Round, EndCap = System.Drawing.Drawing2D.LineCap.Round };
+        graphics.DrawLine(pen, 4, 12, 11.5f, 4.5f);
+        graphics.DrawLine(pen, 3, 13, 5.5f, 12.5f);
+        graphics.DrawLine(pen, 10.5f, 4, 12.5f, 6);
+        return bitmap;
     }
 
     private static void StylePrimaryButton(Button button)

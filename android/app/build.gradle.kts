@@ -13,8 +13,8 @@ android {
         applicationId = "world.zcn.pricereminder"
         minSdk = 29
         targetSdk = 35
-        versionCode = 4
-        versionName = "0.1.3"
+        versionCode = System.getenv("PRICE_REMINDER_VERSION_CODE")?.toIntOrNull() ?: 5
+        versionName = System.getenv("PRICE_REMINDER_VERSION") ?: "0.1.4"
         buildConfigField("String", "PRICE_REMINDER_SERVER_URL", "\"https://keyflow.zcn.world/price-reminder\"")
     }
 

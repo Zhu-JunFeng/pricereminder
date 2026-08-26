@@ -16,6 +16,18 @@ enum class TriggerDirection { RISE, FALL }
 enum class AlertRuleKind { PERCENTAGE, TARGET }
 enum class TargetDirection { ABOVE, BELOW }
 
+object ContractOrdering {
+    fun orderedSymbols(symbols: List<String>, recentSymbols: List<String>, query: String = ""): List<String> {
+        val normalized = query.trim()
+        val filtered = symbols.filter { normalized.isEmpty() || it.contains(normalized, ignoreCase = true) }
+        val ranks = recentSymbols.take(3).mapIndexed { index, symbol -> symbol.uppercase() to index }.toMap()
+        return filtered.withIndex().sortedWith(
+            compareBy<IndexedValue<String>> { ranks[it.value.uppercase()] ?: Int.MAX_VALUE }
+                .thenBy { it.index }
+        ).map { it.value }
+    }
+}
+
 data class AlertRule(
     val id: String = UUID.randomUUID().toString(),
     val symbol: String,

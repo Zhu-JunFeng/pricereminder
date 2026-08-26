@@ -20,6 +20,7 @@ internal sealed class LocalStore
     {
         Directory.CreateDirectory(directory);
         State = Load();
+        if (State.RecentSymbols.Count == 0) State.RecentSymbols = [State.PrimarySymbol];
         Trim();
     }
 
@@ -61,5 +62,14 @@ internal sealed class LocalStore
         var historyCutoff = DateTimeOffset.UtcNow.AddDays(-30).ToUnixTimeMilliseconds();
         State.History = State.History.Where(item => item.EventTime >= historyCutoff).Take(500).ToList();
         State.TraySymbols = State.TraySymbols.Distinct(StringComparer.OrdinalIgnoreCase).Take(3).ToList();
+        State.RecentSymbols = State.RecentSymbols.Distinct(StringComparer.OrdinalIgnoreCase).Take(3).ToList();
+    }
+
+    public void RecordRecentSymbol(string symbol)
+    {
+        State.RecentSymbols.RemoveAll(item => string.Equals(item, symbol, StringComparison.OrdinalIgnoreCase));
+        State.RecentSymbols.Insert(0, symbol.ToUpperInvariant());
+        State.RecentSymbols = State.RecentSymbols.Take(3).ToList();
+        Save();
     }
 }

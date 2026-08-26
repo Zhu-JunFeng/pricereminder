@@ -15,6 +15,34 @@ public struct Contract: Codable, Hashable, Identifiable, Sendable {
     }
 }
 
+public enum ContractOrdering {
+    public static func ordered(
+        _ contracts: [Contract], recentSymbols: [String], query: String = ""
+    ) -> [Contract] {
+        let normalized = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        let filtered = contracts.filter {
+            normalized.isEmpty
+                || $0.symbol.localizedCaseInsensitiveContains(normalized)
+                || $0.baseAsset.localizedCaseInsensitiveContains(normalized)
+                || $0.quoteAsset.localizedCaseInsensitiveContains(normalized)
+        }
+        var recentRanks: [String: Int] = [:]
+        for (index, symbol) in recentSymbols.prefix(3).enumerated() {
+            if recentRanks[symbol.uppercased()] == nil { recentRanks[symbol.uppercased()] = index }
+        }
+        return filtered.enumerated().sorted { left, right in
+            let leftRank = recentRanks[left.element.symbol.uppercased()]
+            let rightRank = recentRanks[right.element.symbol.uppercased()]
+            switch (leftRank, rightRank) {
+            case let (.some(lhs), .some(rhs)): return lhs < rhs
+            case (.some, .none): return true
+            case (.none, .some): return false
+            case (.none, .none): return left.offset < right.offset
+            }
+        }.map(\.element)
+    }
+}
+
 public struct PricePoint: Codable, Hashable, Sendable {
     public let symbol: String
     public let price: Decimal

@@ -1,11 +1,11 @@
 # 币价提醒 PriceReminder
 
 [![Latest Release](https://img.shields.io/github/v/release/Zhu-JunFeng/pricereminder?display_name=tag&sort=semver)](https://github.com/Zhu-JunFeng/pricereminder/releases/latest)
-[![Windows Build](https://github.com/Zhu-JunFeng/pricereminder/actions/workflows/windows.yml/badge.svg)](https://github.com/Zhu-JunFeng/pricereminder/actions/workflows/windows.yml)
+[![Build and Release](https://github.com/Zhu-JunFeng/pricereminder/actions/workflows/release.yml/badge.svg)](https://github.com/Zhu-JunFeng/pricereminder/actions/workflows/release.yml)
 
 一个安静、直接的币安 U 本位永续合约价格提醒工具。支持 Android、兼容 Android APK 的华为设备、iPhone、macOS 和 Windows；价格判断和通知尽量在终端本地完成。
 
-当前版本：[`v0.1.3`](https://github.com/Zhu-JunFeng/pricereminder/releases/tag/v0.1.3)
+当前稳定版本以页面顶部的 Latest Release 徽章为准。
 
 ## 下载与安装
 
@@ -13,15 +13,15 @@
 
 | 平台 | 安装包 | 要求与安装方式 |
 | --- | --- | --- |
-| Android / 华为 | `PriceReminder-Android-0.1.3.apk` | Android 10+；允许浏览器或文件管理器“安装未知应用”后安装。该 APK 不依赖 GMS/HMS，不支持 HarmonyOS NEXT。 |
-| macOS | `PriceReminder-macOS-0.1.3.dmg` | macOS 14+；打开 DMG，将 App 放入“应用程序”。当前版本未公证，首次启动如被拦截，请在“系统设置 → 隐私与安全性”中确认打开。 |
-| Windows | `PriceReminder-Windows-x64-0.1.3.zip` | Windows 10/11 x64；解压后运行 `PriceReminder.exe`，无需预装 .NET。当前版本未使用商业代码签名，SmartScreen 可能要求手动确认。 |
+| Android / 华为 | `PriceReminder-Android-<版本>.apk` | Android 10+；允许浏览器或文件管理器“安装未知应用”后安装。该 APK 不依赖 GMS/HMS，不支持 HarmonyOS NEXT。 |
+| macOS | `PriceReminder-macOS-<版本>.dmg` | macOS 14+；打开 DMG，将 App 放入“应用程序”。当前版本未公证，首次启动如被拦截，请在“系统设置 → 隐私与安全性”中确认打开。 |
+| Windows | `PriceReminder-Windows-x64-<版本>.zip` | Windows 10/11 x64；解压后运行 `PriceReminder.exe`，无需预装 .NET。当前版本未使用商业代码签名，SmartScreen 可能要求手动确认。 |
 | iPhone | 暂无通用安装包 | iOS 17.2+；需使用 Xcode 和开发者账号自行签名。后台 APNs 通知要求加入 Apple Developer Program，Personal Team 不支持 Push Notifications。 |
 
 每个 Release 同时提供 `SHA256SUMS-<version>.txt`。下载后可计算安装包 SHA-256，并与文件中的对应记录比较：
 
 ```bash
-shasum -a 256 PriceReminder-macOS-0.1.3.dmg
+shasum -a 256 PriceReminder-macOS-<版本>.dmg
 ```
 
 ## 核心功能
@@ -29,6 +29,8 @@ shasum -a 256 PriceReminder-macOS-0.1.3.dmg
 - **实时价格：** 使用币安 U 本位永续公开 `<symbol>@trade` WebSocket 的最新成交价，不需要 API Key。
 - **涨跌幅提醒：** 监控当前价相对 `N` 分钟前价格的滚动变化，支持 `N=1..60` 分钟、`X=0.1..100%`。
 - **目标价格提醒：** 支持“达到或高于”和“达到或低于”两种方向。
+- **合约快速选择：** 所有合约选择器均可输入搜索，最近确认选择的三个合约自动置顶但不额外显示分组。
+- **提醒编辑：** 已配置提醒可原位编辑类型、合约和全部参数，并安全重新初始化触发状态。
 - **自动重新武装：** 目标价进入目标区间时只提醒一次，离开区间后才允许再次提醒；涨跌方向分别维护触发状态。
 - **本地系统通知：** Android、华为、macOS 和 Windows 在终端本地判断并通知；关闭通知权限不会停止行情和规则计算。
 - **菜单栏与托盘：** macOS 菜单栏、Windows 通知区域最多展示三个自选合约的实时价格。
@@ -101,7 +103,7 @@ flowchart LR
 | macOS | 菜单栏应用，本地判断 | 菜单栏最多三个合约 | 退出应用后停止 |
 | Windows | 托盘应用，本地判断 | 通知区域最多三个合约 | 关闭窗口继续，托盘选择“退出”后停止 |
 
-应用启动后默认开始监控，仍可在界面中手动停止或重新开始。
+应用启动、重启或登录系统后默认不开始监控；只有用户明确点击“开始监控”后，本次运行才会计算并发送提醒。
 
 ## 技术栈
 
@@ -190,4 +192,4 @@ dotnet publish windows/PriceReminder.Windows.csproj --configuration Release --ru
 
 ## 版本发布
 
-版本号在 Android、Apple 和 Windows 工程中同步维护。发布包与校验文件统一上传到 [GitHub Releases](https://github.com/Zhu-JunFeng/pricereminder/releases)，Windows 自包含包同时由 [Windows Actions](https://github.com/Zhu-JunFeng/pricereminder/actions/workflows/windows.yml) 在真实 Windows 环境验证。
+每次推送 `main` 后，GitHub Actions 会串行选择下一个补丁版本，并在 Linux、macOS、Windows 环境完成服务端测试、三端规则检查、Android APK、macOS DMG、Windows 自包含包和 iPhone 模拟器构建。只有全部成功才会创建新标签与 [GitHub Release](https://github.com/Zhu-JunFeng/pricereminder/releases)，并上传三个桌面/移动安装包及 SHA-256 校验文件。Pull Request 只构建验证，不发布版本。

@@ -70,7 +70,6 @@ internal sealed class MonitorService : IDisposable
 
     public void InitializeRule(AlertRule rule)
     {
-        if (rule.Kind != AlertRuleKind.Target) return;
         var current = buffer.Latest(rule.Symbol);
         if (current is not null) RuleEngine.Initialize(rule, current, buffer);
     }

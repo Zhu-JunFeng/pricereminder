@@ -6,6 +6,19 @@ import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class RuleEngineTest {
+    @Test
+    fun recentSymbolsLeadMatchingResultsWithoutChangingTheRest() {
+        val symbols = listOf("ETHUSDT", "BTCUSDT", "SOLUSDT", "BTCDOMUSDT")
+        assertEquals(
+            listOf("SOLUSDT", "BTCUSDT", "ETHUSDT", "BTCDOMUSDT"),
+            ContractOrdering.orderedSymbols(symbols, listOf("SOLUSDT", "BTCUSDT")),
+        )
+        assertEquals(
+            listOf("BTCDOMUSDT", "BTCUSDT"),
+            ContractOrdering.orderedSymbols(symbols, listOf("SOLUSDT", "BTCDOMUSDT"), "btc"),
+        )
+    }
+
     @Test fun equalThresholdTriggersAndRearms() {
         val buffer = PriceBuffer()
         val rule = AlertRule(symbol = "BTCUSDT", windowMinutes = 1, thresholdText = "5")

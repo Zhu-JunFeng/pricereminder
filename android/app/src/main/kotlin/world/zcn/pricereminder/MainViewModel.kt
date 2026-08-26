@@ -19,6 +19,7 @@ data class AppUiState(
     val rules: List<StoredRule> = emptyList(),
     val history: List<TriggerHistory> = emptyList(),
     val primarySymbol: String = "BTCUSDT",
+    val recentSymbols: List<String> = listOf("BTCUSDT"),
     val loading: Boolean = true,
     val error: String? = null,
     val selfCheckMessage: String? = null,
@@ -30,6 +31,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         AppUiState(
             rules = container.localStore.rules(), history = container.localStore.history(),
             primarySymbol = container.localStore.primarySymbol,
+            recentSymbols = container.localStore.recentSymbols,
         )
     )
     val state: StateFlow<AppUiState> = mutableState.asStateFlow()
@@ -47,6 +49,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun selectPrimary(symbol: String) {
         container.localStore.primarySymbol = symbol
+        recordRecentSymbol(symbol)
         mutableState.value = mutableState.value.copy(primarySymbol = symbol)
         syncSubscriptions()
     }
@@ -62,6 +65,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             return "相同合约、窗口和阈值的规则已存在"
         }
         val updated = current + StoredRule(UUID.randomUUID().toString(), symbol, window, normalized)
+        recordRecentSymbol(symbol)
         saveRules(updated)
         return null
     }
@@ -81,8 +85,50 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             thresholdText = "0", kind = "target", targetDirection = direction,
             targetPriceText = normalized,
         )
+        recordRecentSymbol(symbol)
         saveRules(updated)
         return null
+    }
+
+    fun updateRule(
+        id: String, symbol: String, kind: String, window: Int, threshold: String,
+        direction: String, targetPrice: String,
+    ): String? {
+        val current = mutableState.value.rules
+        val existing = current.firstOrNull { it.id == id } ?: return null
+        val replacement = if (kind == "percentage") {
+            val normalized = threshold.trim()
+            if (window !in 1..60) return "时间窗口必须在 1 到 60 分钟之间"
+            val value = normalized.toBigDecimalOrNull() ?: return "请输入有效百分比"
+            if (value < "0.1".toBigDecimal() || value > "100".toBigDecimal()) return "变化阈值必须在 0.1% 到 100% 之间"
+            if (current.any {
+                    it.id != id && it.kind == "percentage" && it.symbol == symbol &&
+                        it.windowMinutes == window && it.thresholdText.toBigDecimalOrNull() == value
+                }) return "相同合约、窗口和阈值的规则已存在"
+            StoredRule(id, symbol, window, normalized, enabled = existing.enabled)
+        } else {
+            val normalized = targetPrice.trim()
+            val value = normalized.toBigDecimalOrNull() ?: return "请输入有效目标价格"
+            if (value <= java.math.BigDecimal.ZERO) return "目标价格必须大于 0"
+            if (current.any {
+                    it.id != id && it.kind == "target" && it.symbol == symbol &&
+                        it.targetDirection == direction && it.targetPriceText?.toBigDecimalOrNull() == value
+                }) return "相同合约、方向和目标价格的规则已存在"
+            StoredRule(
+                id, symbol, 0, "0", enabled = existing.enabled, kind = "target",
+                targetDirection = direction, targetPriceText = normalized,
+            )
+        }
+        recordRecentSymbol(symbol)
+        saveRules(current.map { if (it.id == id) replacement else it })
+        return null
+    }
+
+    fun recordRecentSymbol(symbol: String) {
+        val recent = (listOf(symbol.uppercase()) + mutableState.value.recentSymbols)
+            .distinctBy(String::uppercase).take(3)
+        container.localStore.recentSymbols = recent
+        mutableState.value = mutableState.value.copy(recentSymbols = recent)
     }
 
     fun toggleRule(id: String, enabled: Boolean) {

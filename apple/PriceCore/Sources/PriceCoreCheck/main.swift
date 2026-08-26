@@ -111,6 +111,19 @@ func decodesServerRelayEvents() throws {
     try expect(serverTime == 1787363071001, "server relay must decode server time")
 }
 
+func recentContractsLeadMatchingResultsWithoutChangingTheRest() throws {
+    let contracts = [
+        Contract(symbol: "ETHUSDT", baseAsset: "ETH", quoteAsset: "USDT", tickSize: "0.01"),
+        Contract(symbol: "BTCUSDT", baseAsset: "BTC", quoteAsset: "USDT", tickSize: "0.10"),
+        Contract(symbol: "SOLUSDT", baseAsset: "SOL", quoteAsset: "USDT", tickSize: "0.001"),
+        Contract(symbol: "BTCDOMUSDT", baseAsset: "BTCDOM", quoteAsset: "USDT", tickSize: "0.10"),
+    ]
+    let all = ContractOrdering.ordered(contracts, recentSymbols: ["SOLUSDT", "BTCUSDT"])
+    try expect(all.map(\.symbol) == ["SOLUSDT", "BTCUSDT", "ETHUSDT", "BTCDOMUSDT"], "recent symbols must lead")
+    let matching = ContractOrdering.ordered(contracts, recentSymbols: ["SOLUSDT", "BTCDOMUSDT"], query: "btc")
+    try expect(matching.map(\.symbol) == ["BTCDOMUSDT", "BTCUSDT"], "only matching recent symbols must lead search")
+}
+
 do {
     try equalThresholdTriggersAndRearms()
     try directionsAreIndependent()
@@ -119,6 +132,7 @@ do {
     try restoredBufferKeepsLatestPointPerSecondAndOneHour()
     try decodesBinanceContractsAndTrades()
     try decodesServerRelayEvents()
+    try recentContractsLeadMatchingResultsWithoutChangingTheRest()
     print("PriceCore checks passed")
 } catch {
     fputs("PriceCore check failed: \(error)\n", stderr)

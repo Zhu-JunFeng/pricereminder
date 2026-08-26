@@ -19,6 +19,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ShowChart
 import androidx.compose.material.icons.outlined.AddAlert
 import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.NotificationsActive
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Settings
@@ -58,6 +59,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import world.zcn.pricereminder.AppUiState
 import world.zcn.pricereminder.MainViewModel
 import world.zcn.pricereminder.data.ContractDto
+import world.zcn.pricereminder.data.StoredRule
+import world.zcn.pricereminder.core.ContractOrdering
 import world.zcn.pricereminder.monitor.MonitorBus
 import java.math.RoundingMode
 import java.text.DateFormat
@@ -113,7 +116,7 @@ private fun MarketScreen(
     Column(Modifier.fillMaxSize().padding(horizontal = 20.dp, vertical = 18.dp)) {
         Text("实时价格", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.SemiBold)
         Spacer(Modifier.height(18.dp))
-        ContractPicker(state.contracts, state.primarySymbol, "主合约", onSelect)
+        ContractPicker(state.contracts, state.recentSymbols, state.primarySymbol, "主合约", onSelect)
         Spacer(Modifier.height(28.dp))
         Text(state.primarySymbol, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Text(
@@ -150,6 +153,7 @@ private fun MarketScreen(
 @Composable
 private fun RulesScreen(state: AppUiState, viewModel: MainViewModel) {
     var adding by remember { mutableStateOf(false) }
+    var editingRule by remember { mutableStateOf<StoredRule?>(null) }
     LazyColumn(Modifier.fillMaxSize(), contentPadding = androidx.compose.foundation.layout.PaddingValues(20.dp)) {
         item {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
@@ -157,7 +161,15 @@ private fun RulesScreen(state: AppUiState, viewModel: MainViewModel) {
                     Text("价格预警", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.SemiBold)
                     Text("涨跌幅与目标价格 · ${state.rules.size}/50", color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-                Button(onClick = { adding = !adding }, shape = RoundedCornerShape(8.dp)) {
+                Button(onClick = {
+                    if (adding) {
+                        adding = false
+                        editingRule = null
+                    } else {
+                        adding = true
+                        editingRule = null
+                    }
+                }, shape = RoundedCornerShape(8.dp)) {
                     Icon(Icons.Outlined.AddAlert, contentDescription = null)
                     Spacer(Modifier.width(6.dp))
                     Text(if (adding) "收起" else "添加")
@@ -165,9 +177,14 @@ private fun RulesScreen(state: AppUiState, viewModel: MainViewModel) {
             }
             if (adding) AddRuleForm(
                 contracts = state.contracts,
+                recentSymbols = state.recentSymbols,
                 initialSymbol = state.primarySymbol,
+                initialRule = editingRule,
                 onSavePercentage = viewModel::addRule,
                 onSaveTarget = viewModel::addTargetRule,
+                onUpdate = viewModel::updateRule,
+                onSelectSymbol = viewModel::recordRecentSymbol,
+                onSaved = { adding = false; editingRule = null },
             )
             Spacer(Modifier.height(18.dp))
         }
@@ -186,6 +203,9 @@ private fun RulesScreen(state: AppUiState, viewModel: MainViewModel) {
                     )
                 }
                 Switch(checked = rule.enabled, onCheckedChange = { viewModel.toggleRule(rule.id, it) })
+                IconButton(onClick = { editingRule = rule; adding = true }) {
+                    Icon(Icons.Outlined.Edit, contentDescription = "编辑规则")
+                }
                 IconButton(onClick = { viewModel.deleteRule(rule.id) }) { Icon(Icons.Outlined.Delete, contentDescription = "删除规则") }
             }
             HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.45f))
@@ -219,23 +239,31 @@ private fun RulesScreen(state: AppUiState, viewModel: MainViewModel) {
 @Composable
 private fun AddRuleForm(
     contracts: List<ContractDto>,
+    recentSymbols: List<String>,
     initialSymbol: String,
+    initialRule: StoredRule?,
     onSavePercentage: (String, Int, String) -> String?,
     onSaveTarget: (String, String, String) -> String?,
+    onUpdate: (String, String, String, Int, String, String, String) -> String?,
+    onSelectSymbol: (String) -> Unit,
+    onSaved: () -> Unit,
 ) {
-    var symbol by remember { mutableStateOf(initialSymbol) }
-    var kind by remember { mutableStateOf("percentage") }
-    var window by remember { mutableStateOf("5") }
-    var threshold by remember { mutableStateOf("3") }
-    var targetDirection by remember { mutableStateOf("above") }
-    var targetPrice by remember { mutableStateOf("") }
-    var error by remember { mutableStateOf<String?>(null) }
+    var symbol by remember(initialRule?.id) { mutableStateOf(initialRule?.symbol ?: initialSymbol) }
+    var kind by remember(initialRule?.id) { mutableStateOf(initialRule?.kind ?: "percentage") }
+    var window by remember(initialRule?.id) { mutableStateOf((initialRule?.windowMinutes?.takeIf { it > 0 } ?: 5).toString()) }
+    var threshold by remember(initialRule?.id) { mutableStateOf(initialRule?.thresholdText ?: "3") }
+    var targetDirection by remember(initialRule?.id) { mutableStateOf(initialRule?.targetDirection ?: "above") }
+    var targetPrice by remember(initialRule?.id) { mutableStateOf(initialRule?.targetPriceText ?: "") }
+    var error by remember(initialRule?.id) { mutableStateOf<String?>(null) }
     Column(Modifier.fillMaxWidth().padding(top = 18.dp, bottom = 6.dp)) {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             TextButton(onClick = { kind = "percentage" }) { Text(if (kind == "percentage") "✓ 涨跌幅" else "涨跌幅") }
             TextButton(onClick = { kind = "target" }) { Text(if (kind == "target") "✓ 目标价格" else "目标价格") }
         }
-        ContractPicker(contracts, symbol, "U本位永续合约") { symbol = it }
+        ContractPicker(contracts, recentSymbols, symbol, "U本位永续合约") {
+            symbol = it
+            onSelectSymbol(it)
+        }
         Spacer(Modifier.height(10.dp))
         if (kind == "percentage") {
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -256,22 +284,28 @@ private fun AddRuleForm(
         error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 6.dp)) }
         Button(
             onClick = {
-                error = if (kind == "percentage") onSavePercentage(symbol, window.toIntOrNull() ?: 0, threshold)
+                error = if (initialRule != null) {
+                    onUpdate(initialRule.id, symbol, kind, window.toIntOrNull() ?: 0, threshold, targetDirection, targetPrice)
+                } else if (kind == "percentage") onSavePercentage(symbol, window.toIntOrNull() ?: 0, threshold)
                 else onSaveTarget(symbol, targetDirection, targetPrice)
+                if (error == null) onSaved()
             },
             modifier = Modifier.fillMaxWidth().padding(top = 12.dp), shape = RoundedCornerShape(8.dp),
-        ) { Text("保存预警") }
+        ) { Text(if (initialRule == null) "保存预警" else "保存修改") }
     }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun ContractPicker(contracts: List<ContractDto>, selected: String, label: String, onSelect: (String) -> Unit) {
+private fun ContractPicker(
+    contracts: List<ContractDto>, recentSymbols: List<String>, selected: String,
+    label: String, onSelect: (String) -> Unit,
+) {
     var expanded by remember { mutableStateOf(false) }
     var query by remember { mutableStateOf("") }
-    val matches = if (query.isBlank()) contracts.take(50) else contracts.filter {
-        it.symbol.contains(query.trim(), ignoreCase = true)
-    }.take(50)
+    val bySymbol = contracts.associateBy { it.symbol }
+    val matches = ContractOrdering.orderedSymbols(contracts.map { it.symbol }, recentSymbols, query)
+        .take(50).mapNotNull(bySymbol::get)
     ExposedDropdownMenuBox(expanded, {
         expanded = it
         if (it) query = ""

@@ -11,6 +11,7 @@ internal static class CoreChecks
             MissingWindowDoesNotTrigger();
             ReplayReplacesSameSecond();
             TargetPriceTriggersAndRearms();
+            RecentContractsLeadMatchingResultsWithoutChangingTheRest();
             Console.WriteLine("PriceReminder Windows core checks passed");
             return 0;
         }
@@ -89,6 +90,18 @@ internal static class CoreChecks
         buffer.Add(current);
         RuleEngine.Evaluate(rule, current, buffer);
         Expect(!rule.TargetTriggered, "target should rearm after leaving range");
+    }
+
+    private static void RecentContractsLeadMatchingResultsWithoutChangingTheRest()
+    {
+        Contract[] contracts = [
+            new("ETHUSDT", "ETH", "USDT", "0.01"), new("BTCUSDT", "BTC", "USDT", "0.10"),
+            new("SOLUSDT", "SOL", "USDT", "0.001"), new("BTCDOMUSDT", "BTCDOM", "USDT", "0.10"),
+        ];
+        Expect(ContractOrdering.Ordered(contracts, ["SOLUSDT", "BTCUSDT"]).Select(item => item.Symbol)
+            .SequenceEqual(["SOLUSDT", "BTCUSDT", "ETHUSDT", "BTCDOMUSDT"]), "recent symbols must lead");
+        Expect(ContractOrdering.Ordered(contracts, ["SOLUSDT", "BTCDOMUSDT"], "btc").Select(item => item.Symbol)
+            .SequenceEqual(["BTCDOMUSDT", "BTCUSDT"]), "only matching recent symbols must lead search");
     }
 
     private static void Expect(bool condition, string message)

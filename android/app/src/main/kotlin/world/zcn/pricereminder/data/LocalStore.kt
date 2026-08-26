@@ -27,6 +27,12 @@ class LocalStore(context: Context) {
         get() = preferences.getString("primary_symbol", "BTCUSDT") ?: "BTCUSDT"
         set(value) = preferences.edit().putString("primary_symbol", value).apply()
 
+    var recentSymbols: List<String>
+        get() = decodeList<String>(preferences.getString("recent_symbols", null)).ifEmpty { listOf(primarySymbol) }
+        set(value) = preferences.edit().putString(
+            "recent_symbols", json.encodeToString(value.distinctBy(String::uppercase).take(3))
+        ).apply()
+
     fun rules(): List<StoredRule> = decodeList(preferences.getString("rules", null))
 
     fun saveRules(rules: List<StoredRule>) {

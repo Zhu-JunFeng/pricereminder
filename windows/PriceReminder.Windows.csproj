@@ -7,7 +7,7 @@
     <Nullable>enable</Nullable>
     <RootNamespace>PriceReminder.Windows</RootNamespace>
     <AssemblyName>PriceReminder</AssemblyName>
-    <Version>0.1.3</Version>
+    <Version>0.1.4</Version>
     <ApplicationIcon>PriceReminder.ico</ApplicationIcon>
     <PublishSingleFile>true</PublishSingleFile>
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
