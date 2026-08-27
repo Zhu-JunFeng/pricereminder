@@ -14,6 +14,7 @@ import AppKit
 final class AppModel: ObservableObject {
     @Published private(set) var contracts: [Contract] = []
     @Published private(set) var prices: [String: PricePoint] = [:]
+    @Published private(set) var consecutivePriceTrends: [String: ConsecutivePriceTrend] = [:]
     @Published var rules: [AlertRule] = LocalPersistence.loadRules()
     @Published private(set) var history: [TriggerRecord] = LocalPersistence.loadHistory()
     @Published private(set) var monitorState: MonitorState = .disconnected
@@ -45,6 +46,7 @@ final class AppModel: ObservableObject {
     private var notificationsAllowed = false
     private var lastSurfaceUpdate = Date.distantPast
     private var lastPersistedEventTimes: [String: Int64] = [:]
+    private var priceTrendTrackers: [String: ConsecutivePriceTrendTracker] = [:]
     @Published private(set) var monitoringEnabled = false
     #if os(iOS)
     private var activity: Activity<PriceActivityAttributes>?
@@ -114,6 +116,7 @@ final class AppModel: ObservableObject {
     func stopMonitoring() {
         persistAllPrices()
         monitoringEnabled = false
+        resetPriceTrends()
         streamTask?.cancel()
         relayRetryTask?.cancel()
         watchdogTask?.cancel()
@@ -342,6 +345,7 @@ final class AppModel: ObservableObject {
         priceFlushTask?.cancel()
         priceFlushTask = nil
         pendingPrices.removeAll()
+        resetPriceTrends()
         await stream.disconnect()
         monitorState = .disconnected
         statusMessage = "已进入后台；后台监控需要服务端"
@@ -349,6 +353,7 @@ final class AppModel: ObservableObject {
     #endif
 
     private func connect() {
+        resetPriceTrends()
         streamTask?.cancel()
         priceFlushTask?.cancel()
         priceFlushTask = nil
@@ -402,6 +407,7 @@ final class AppModel: ObservableObject {
                 } catch {
                     relayRetryTask?.cancel()
                     guard !Task.isCancelled else { return }
+                    resetPriceTrends()
                     reconnectCount += 1
                     lastConnectionError = error.localizedDescription
                     relayNext.toggle()
@@ -422,6 +428,9 @@ final class AppModel: ObservableObject {
                 guard !Task.isCancelled, monitoringEnabled,
                       let reference = lastReceivedAt ?? connectionStartedAt else { continue }
                 let elapsed = Date().timeIntervalSince(reference)
+                if elapsed >= 30 {
+                    resetPriceTrends()
+                }
                 if elapsed >= 3, !usingServerRelay {
                     statusMessage = "币安直连无有效行情，正在切换服务端"
                     await stream.disconnect()
@@ -464,10 +473,13 @@ final class AppModel: ObservableObject {
         lastPriceReceivedAt = Date()
         connectionFailureNotified = false
         if point.replay {
+            priceTrendTrackers[point.symbol] = ConsecutivePriceTrendTracker()
+            consecutivePriceTrends.removeValue(forKey: point.symbol)
             monitorState = .warmingUp
             statusMessage = "正在补齐一小时价格"
             return
         }
+        updatePriceTrend(with: point)
         monitorState = .live
         evaluate(point)
         persistPriceIfDue(point)
@@ -485,6 +497,19 @@ final class AppModel: ObservableObject {
         guard point.eventTime - last >= 15_000 else { return }
         LocalPersistence.savePrices(buffer.points(symbol: point.symbol), symbol: point.symbol)
         lastPersistedEventTimes[point.symbol] = point.eventTime
+    }
+
+    private func updatePriceTrend(with point: PricePoint) {
+        var tracker = priceTrendTrackers[point.symbol] ?? ConsecutivePriceTrendTracker()
+        let trend = tracker.update(price: point.price)
+        priceTrendTrackers[point.symbol] = tracker
+        consecutivePriceTrends[point.symbol] = trend
+    }
+
+    private func resetPriceTrends() {
+        guard !priceTrendTrackers.isEmpty || !consecutivePriceTrends.isEmpty else { return }
+        priceTrendTrackers.removeAll()
+        consecutivePriceTrends.removeAll()
     }
 
     private func persistAllPrices() {

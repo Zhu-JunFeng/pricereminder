@@ -124,6 +124,18 @@ func recentContractsLeadMatchingResultsWithoutChangingTheRest() throws {
     try expect(matching.map(\.symbol) == ["BTCDOMUSDT", "BTCUSDT"], "only matching recent symbols must lead search")
 }
 
+func consecutivePriceTrendRequiresTwoMatchingMovements() throws {
+    var tracker = ConsecutivePriceTrendTracker()
+    try expect(tracker.update(price: 100) == nil, "first price must not show a trend")
+    try expect(tracker.update(price: 101) == nil, "one rise must not show a trend")
+    try expect(tracker.update(price: 102) == .rise, "two rises must show the rise trend")
+    try expect(tracker.update(price: 101) == nil, "a reversal must clear the rise trend")
+    try expect(tracker.update(price: 100) == .fall, "two falls must show the fall trend")
+    try expect(tracker.update(price: 100) == nil, "an unchanged price must clear the trend")
+    try expect(tracker.update(price: 99) == nil, "the first fall after a flat price must not show a trend")
+    try expect(tracker.update(price: 98) == .fall, "two new falls must show the fall trend")
+}
+
 do {
     try equalThresholdTriggersAndRearms()
     try directionsAreIndependent()
@@ -133,6 +145,7 @@ do {
     try decodesBinanceContractsAndTrades()
     try decodesServerRelayEvents()
     try recentContractsLeadMatchingResultsWithoutChangingTheRest()
+    try consecutivePriceTrendRequiresTwoMatchingMovements()
     print("PriceCore checks passed")
 } catch {
     fputs("PriceCore check failed: \(error)\n", stderr)

@@ -31,11 +31,19 @@ private struct MenuBarLabel: View {
     @EnvironmentObject private var model: AppModel
 
     var body: some View {
-        let values = model.menuSymbols.prefix(3).map { symbol in
-            model.prices[symbol].map { "\(symbol.replacingOccurrences(of: "USDT", with: "")) \($0.priceText)" } ?? "\(symbol) --"
+        HStack(spacing: 5) {
+            ForEach(Array(model.menuSymbols.prefix(3).enumerated()), id: \.element) { index, symbol in
+                if index > 0 {
+                    Text("·").foregroundStyle(.secondary)
+                }
+                HStack(spacing: 2) {
+                    let shortSymbol = symbol.replacingOccurrences(of: "USDT", with: "")
+                    Text("\(shortSymbol) \(model.prices[symbol]?.priceText ?? "--")")
+                    PriceTrendArrow(trend: model.consecutivePriceTrends[symbol], size: 8)
+                }
+            }
         }
-        Text(values.joined(separator: "  ·  "))
-            .monospacedDigit()
+        .monospacedDigit()
     }
 }
 
@@ -59,8 +67,11 @@ struct MenuPanel: View {
                 HStack {
                     Text(symbol).font(.headline)
                     Spacer()
-                    Text(model.prices[symbol]?.priceText ?? "--")
-                        .font(.title3.weight(.semibold)).numericPriceStyle()
+                    HStack(spacing: 5) {
+                        Text(model.prices[symbol]?.priceText ?? "--")
+                            .font(.title3.weight(.semibold)).numericPriceStyle()
+                        PriceTrendArrow(trend: model.consecutivePriceTrends[symbol], size: 10)
+                    }
                 }
                 .padding(.horizontal, 16).padding(.vertical, 12)
             }
@@ -81,6 +92,20 @@ struct MenuPanel: View {
             .padding(14)
         }
         .frame(width: 340)
+    }
+}
+
+private struct PriceTrendArrow: View {
+    let trend: ConsecutivePriceTrend?
+    let size: CGFloat
+
+    var body: some View {
+        if let trend {
+            Image(systemName: trend == .rise ? "arrow.up" : "arrow.down")
+                .font(.system(size: size, weight: .bold))
+                .foregroundStyle(trend == .rise ? AppTheme.rise : AppTheme.fall)
+                .accessibilityLabel(trend == .rise ? "连续上涨" : "连续下跌")
+        }
     }
 }
 
