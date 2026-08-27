@@ -39,7 +39,7 @@ private struct MenuBarLabel: View {
                 HStack(spacing: 2) {
                     let shortSymbol = symbol.replacingOccurrences(of: "USDT", with: "")
                     Text("\(shortSymbol) \(model.prices[symbol]?.priceText ?? "--")")
-                    PriceTrendArrow(trend: model.consecutivePriceTrends[symbol], size: 6)
+                    PriceTrendArrow(trend: model.consecutivePriceTrends[symbol], size: 7)
                 }
             }
         }
@@ -70,7 +70,7 @@ struct MenuPanel: View {
                     HStack(spacing: 5) {
                         Text(model.prices[symbol]?.priceText ?? "--")
                             .font(.title3.weight(.semibold)).numericPriceStyle()
-                        PriceTrendArrow(trend: model.consecutivePriceTrends[symbol], size: 8)
+                        PriceTrendArrow(trend: model.consecutivePriceTrends[symbol], size: 9)
                     }
                 }
                 .padding(.horizontal, 16).padding(.vertical, 12)
