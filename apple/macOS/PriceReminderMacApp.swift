@@ -39,7 +39,7 @@ private struct MenuBarLabel: View {
                 HStack(spacing: 2) {
                     let shortSymbol = symbol.replacingOccurrences(of: "USDT", with: "")
                     Text("\(shortSymbol) \(model.prices[symbol]?.priceText ?? "--")")
-                    PriceTrendArrow(trend: model.consecutivePriceTrends[symbol], size: 8)
+                    PriceTrendArrow(trend: model.consecutivePriceTrends[symbol], size: 6)
                 }
             }
         }
@@ -70,7 +70,7 @@ struct MenuPanel: View {
                     HStack(spacing: 5) {
                         Text(model.prices[symbol]?.priceText ?? "--")
                             .font(.title3.weight(.semibold)).numericPriceStyle()
-                        PriceTrendArrow(trend: model.consecutivePriceTrends[symbol], size: 10)
+                        PriceTrendArrow(trend: model.consecutivePriceTrends[symbol], size: 8)
                     }
                 }
                 .padding(.horizontal, 16).padding(.vertical, 12)
@@ -101,11 +101,23 @@ private struct PriceTrendArrow: View {
 
     var body: some View {
         if let trend {
-            Image(systemName: trend == .rise ? "arrow.up" : "arrow.down")
-                .font(.system(size: size, weight: .bold))
-                .foregroundStyle(trend == .rise ? AppTheme.rise : AppTheme.fall)
+            Image(nsImage: symbolImage(for: trend))
+                .renderingMode(.original)
+                .frame(width: size, height: size)
                 .accessibilityLabel(trend == .rise ? "连续上涨" : "连续下跌")
         }
+    }
+
+    private func symbolImage(for trend: ConsecutivePriceTrend) -> NSImage {
+        let name = trend == .rise ? "arrow.up" : "arrow.down"
+        let color = NSColor(trend == .rise ? AppTheme.rise : AppTheme.fall)
+        let sizeConfiguration = NSImage.SymbolConfiguration(pointSize: size, weight: .bold)
+        let colorConfiguration = NSImage.SymbolConfiguration(paletteColors: [color])
+        let configuration = sizeConfiguration.applying(colorConfiguration)
+        let image = NSImage(systemSymbolName: name, accessibilityDescription: nil)?
+            .withSymbolConfiguration(configuration) ?? NSImage()
+        image.isTemplate = false
+        return image
     }
 }
 
