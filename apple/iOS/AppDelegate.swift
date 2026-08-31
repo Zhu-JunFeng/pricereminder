@@ -1,14 +1,17 @@
 import UIKit
+@preconcurrency import UserNotifications
 
 extension Notification.Name {
     static let apnsTokenUpdated = Notification.Name("apnsTokenUpdated")
+    static let apnsRegistrationFailed = Notification.Name("apnsRegistrationFailed")
 }
 
-final class AppDelegate: NSObject, UIApplicationDelegate {
+final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDelegate {
     func application(
         _ application: UIApplication,
         didFinishLaunchingWithOptions _: [UIApplication.LaunchOptionsKey: Any]? = nil
     ) -> Bool {
+        UNUserNotificationCenter.current().delegate = self
         application.registerForRemoteNotifications()
         return true
     }
@@ -26,7 +29,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         _ application: UIApplication,
         didFailToRegisterForRemoteNotificationsWithError error: Error
     ) {
-        NotificationCenter.default.post(name: .apnsTokenUpdated, object: nil)
+        NotificationCenter.default.post(name: .apnsRegistrationFailed, object: error.localizedDescription)
     }
 
     func application(
@@ -36,6 +39,14 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
     ) {
         NotificationCenter.default.post(name: .iosBackgroundEventReceived, object: nil)
         completionHandler(.newData)
+    }
+
+    nonisolated func userNotificationCenter(
+        _: UNUserNotificationCenter,
+        willPresent _: UNNotification,
+        withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
+    ) {
+        completionHandler([.banner, .list, .sound])
     }
 }
 

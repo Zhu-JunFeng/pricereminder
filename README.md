@@ -34,7 +34,7 @@ shasum -a 256 PriceReminder-macOS-<版本>.dmg
 - **自动重新武装：** 目标价进入目标区间时只提醒一次，离开区间后才允许再次提醒；涨跌方向分别维护触发状态。
 - **本地系统通知：** Android、华为、macOS 和 Windows 在终端本地判断并通知；关闭通知权限不会停止行情和规则计算。
 - **菜单栏与托盘：** macOS 菜单栏、Windows 通知区域最多展示三个自选合约的实时价格；macOS 连续两次上涨或下跌时分别显示绿色上箭头或红色下箭头。
-- **iPhone 灵动岛：** App 活跃期间通过 Live Activity 展示所选合约，系统展示最多每 15 秒更新一次。
+- **iPhone 灵动岛：** App 活跃时，用户可点击“显示实时价格”创建 Live Activity 展示所选合约；系统展示最多每 15 秒更新一次。
 - **断线自检：** 展示连接路径、订阅数量、行情延迟、最后接收时间、重连次数、最近错误和通知权限，并支持测试通知。
 - **本地历史：** 保存最近 1 小时价格缓冲和最近 30 天触发记录。
 
@@ -103,13 +103,13 @@ flowchart LR
 | macOS | 菜单栏应用，本地判断 | 菜单栏最多三个合约 | 退出应用后停止 |
 | Windows | 托盘应用，本地判断 | 通知区域最多三个合约 | 关闭窗口继续，托盘选择“退出”后停止 |
 
-应用启动、重启或登录系统后默认不开始监控；只有用户明确点击“开始监控”后，本次运行才会计算并发送提醒。
+打开应用后会默认开始监控。Windows 如在设置中启用“开机启动”，用户登录后会以托盘模式启动并开始监控；Android 重启后需要再次打开应用，macOS 和 iPhone 未实现登录启动。
 
 ## 技术栈
 
 | 模块 | 技术 |
 | --- | --- |
-| 共享规则语义 | Swift、Kotlin、C#、Go 分平台实现并使用一致测试用例 |
+| 共享规则语义 | Swift、Kotlin、C#、Go 分平台实现；各端核心检查覆盖阈值、重新武装、数据窗口与目标价格 |
 | iOS / macOS | SwiftUI、ActivityKit、UserNotifications |
 | Android / 华为 | Kotlin、Jetpack Compose、Foreground Service、OkHttp |
 | Windows | .NET 8、WinForms、NotifyIcon |
@@ -189,7 +189,8 @@ dotnet publish windows/PriceReminder.Windows.csproj --configuration Release --ru
 - macOS 安装包尚未 Apple 公证，Windows 可执行文件尚未商业代码签名。
 - iPhone 后台提醒依赖公网 HTTPS 服务端、PostgreSQL、有效 APNs 配置和付费 Apple Developer Program。
 - HarmonyOS NEXT 不能运行 Android APK，当前没有 HarmonyOS NEXT 原生版本。
+- CI 验证规则核心和各平台构建，不替代真实设备上的通知权限、断线重连、价格越线提醒、iPhone APNs 与后台 Live Activity 验收。
 
 ## 版本发布
 
-每次推送 `main` 后，GitHub Actions 会串行选择下一个补丁版本，并在 Linux、macOS、Windows 环境完成服务端测试、三端规则检查、Android APK、macOS DMG、Windows 自包含包和 iPhone 模拟器构建。只有全部成功才会创建新标签与 [GitHub Release](https://github.com/Zhu-JunFeng/pricereminder/releases)，并上传三个桌面/移动安装包及 SHA-256 校验文件。Pull Request 只构建验证，不发布版本。
+每次推送 `main` 后，GitHub Actions 会串行选择下一个补丁版本，并在 Linux、macOS、Windows 环境完成服务端测试、三端规则检查、Android APK、macOS DMG、Windows 自包含包和 iPhone 模拟器构建。只有全部成功才会创建新标签与 [GitHub Release](https://github.com/Zhu-JunFeng/pricereminder/releases)，并上传三个桌面/移动安装包及 SHA-256 校验文件。Pull Request 只构建验证，不发布版本。CI 成功表示代码与安装包构建通过；需要 PostgreSQL 的本地端到端测试、真实设备通知及 iPhone APNs 仍须按 [`docs/local-development.md`](docs/local-development.md) 的条件单独执行。

@@ -23,6 +23,7 @@ final class AppModel: ObservableObject {
     @Published private(set) var lastPriceReceivedAt: Date?
     @Published private(set) var reconnectCount = 0
     @Published private(set) var lastConnectionError: String?
+    @Published private(set) var liveActivityStatusMessage: String?
     @Published var primarySymbol = UserDefaults.standard.string(forKey: "primarySymbol") ?? "BTCUSDT"
     @Published var menuSymbols: [String] = UserDefaults.standard.stringArray(forKey: "menuSymbols") ?? ["BTCUSDT"]
     @Published private(set) var recentSymbols: [String] = {
@@ -281,11 +282,24 @@ final class AppModel: ObservableObject {
         }
     }
 
+    func recordAPNSRegistrationFailure(_ message: String) {
+        backgroundStatusMessage = "APNs 注册不可用：\(message)"
+    }
+
     func fetchIOSBackgroundEvents() async {
         await prepareIOSBackgroundDelivery()
     }
 
-    func startLiveActivity() async throws {
+    func startLiveActivity() async {
+        guard ActivityAuthorizationInfo().areActivitiesEnabled else {
+            liveActivityStatusMessage = "系统未允许实时活动，请在系统设置中允许“币价提醒”的实时活动后重试。"
+            return
+        }
+        guard activity == nil else {
+            liveActivityStatusMessage = "实时活动已在显示中。"
+            return
+        }
+
         let current = prices[primarySymbol]
         let content = ActivityContent(
             state: PriceActivityAttributes.ContentState(
@@ -294,21 +308,33 @@ final class AppModel: ObservableObject {
             ),
             staleDate: Date().addingTimeInterval(30)
         )
-        activity = try Activity.request(
-            attributes: PriceActivityAttributes(startedAt: Date()),
-            content: content,
-            pushType: .token
-        )
-        guard let currentActivity = activity else { return }
+        let currentActivity: Activity<PriceActivityAttributes>
+        do {
+            currentActivity = try Activity.request(
+                attributes: PriceActivityAttributes(startedAt: Date()),
+                content: content,
+                pushType: .token
+            )
+        } catch {
+            liveActivityStatusMessage = "无法创建实时活动：\(error.localizedDescription)"
+            return
+        }
+        activity = currentActivity
+        liveActivityStatusMessage = "实时活动已显示；App 活跃时会更新价格。"
         liveActivityTokenTask?.cancel()
         liveActivityTokenTask = Task {
             for await tokenData in currentActivity.pushTokenUpdates {
                 guard !Task.isCancelled else { return }
                 let token = tokenData.map { String(format: "%02x", $0) }.joined()
                 let expiresAt = Int64(Date().addingTimeInterval(8 * 60 * 60).timeIntervalSince1970 * 1_000)
-                try? await iosBackgroundService.registerLiveActivity(
-                    id: currentActivity.id, token: token, symbol: primarySymbol, expiresAt: expiresAt
-                )
+                do {
+                    try await iosBackgroundService.registerLiveActivity(
+                        id: currentActivity.id, token: token, symbol: primarySymbol, expiresAt: expiresAt
+                    )
+                    liveActivityStatusMessage = "实时活动已显示；后台更新已连接。"
+                } catch {
+                    liveActivityStatusMessage = "实时活动已显示；后台更新不可用：\(error.localizedDescription)"
+                }
             }
         }
     }
@@ -320,6 +346,7 @@ final class AppModel: ObservableObject {
         liveActivityTokenTask = nil
         try? await iosBackgroundService.deleteLiveActivity(id: currentActivity.id)
         await currentActivity.end(nil, dismissalPolicy: .immediate)
+        liveActivityStatusMessage = "实时活动已结束。"
     }
 
     func enterForeground() async {
@@ -438,7 +465,7 @@ final class AppModel: ObservableObject {
                     connectionFailureNotified = true
                     monitorState = .disconnected
                     statusMessage = "连续 60 秒未收到有效行情"
-                    await sendHealthNotification(title: "价格监控已中断", body: "正在重新连接币安行情")
+                    _ = await sendHealthNotification(title: "价格监控已中断", body: "正在重新连接币安行情")
                     await stream.disconnect()
                 } else if elapsed >= 30, monitorState != .disconnected {
                     monitorState = .stale
@@ -649,13 +676,20 @@ final class AppModel: ObservableObject {
         try? await UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: "alert:\(symbol):\(triggers[0].eventTime)", content: content, trigger: nil))
     }
 
-    private func sendHealthNotification(title: String, body: String) async {
-        guard notificationsAllowed else { return }
+    private func sendHealthNotification(title: String, body: String) async -> Bool {
+        guard notificationsAllowed else { return false }
         let content = UNMutableNotificationContent()
         content.title = title
         content.body = body
         content.sound = .default
-        try? await UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: "monitor-health", content: content, trigger: nil))
+        do {
+            try await UNUserNotificationCenter.current().add(
+                UNNotificationRequest(identifier: "monitor-health", content: content, trigger: nil)
+            )
+            return true
+        } catch {
+            return false
+        }
     }
 
     func refreshSelfCheck() async {
@@ -665,8 +699,7 @@ final class AppModel: ObservableObject {
     func sendTestNotification() async -> Bool {
         await refreshNotificationAuthorization()
         guard notificationsAllowed else { return false }
-        await sendHealthNotification(title: "币价提醒测试", body: "系统通知可正常接收")
-        return true
+        return await sendHealthNotification(title: "币价提醒测试", body: "系统通知可正常接收")
     }
 
     var connectionSourceLabel: String {

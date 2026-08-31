@@ -19,6 +19,10 @@ struct PriceReminderApp: App {
                     guard let token = notification.object as? String else { return }
                     Task { await model.registerAPNSToken(token) }
                 }
+                .onReceive(NotificationCenter.default.publisher(for: .apnsRegistrationFailed)) { notification in
+                    guard let message = notification.object as? String else { return }
+                    model.recordAPNSRegistrationFailure(message)
+                }
                 .onReceive(NotificationCenter.default.publisher(for: .iosBackgroundEventReceived)) { _ in
                     Task { await model.fetchIOSBackgroundEvents() }
                 }

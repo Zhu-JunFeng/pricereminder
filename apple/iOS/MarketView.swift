@@ -56,10 +56,13 @@ struct MarketView: View {
                     Text("App 活跃时每 15 秒本地更新；进入后台后停止更新，后台实时活动需要服务端。")
                         .font(.caption).foregroundStyle(.secondary)
                     HStack {
-                        Button("显示实时价格") { Task { try? await model.startLiveActivity() } }
+                        Button("显示实时价格") { Task { await model.startLiveActivity() } }
                             .buttonStyle(.borderedProminent)
                         Button("结束") { Task { await model.stopLiveActivity() } }
                             .buttonStyle(.bordered)
+                    }
+                    if let status = model.liveActivityStatusMessage {
+                        Text(status).font(.caption).foregroundStyle(.secondary)
                     }
                 }
                 #endif
