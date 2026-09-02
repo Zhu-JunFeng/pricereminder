@@ -69,12 +69,38 @@ public enum TriggerDirection: String, Codable, Sendable {
 
 public enum AlertRuleKind: String, Codable, Sendable {
     case percentage
+    case marketPercentage = "market_percentage"
     case target
 }
 
 public enum TargetDirection: String, Codable, Sendable {
     case above
     case below
+}
+
+public struct MarketAlertRule: Codable, Hashable, Identifiable, Sendable {
+    public let id: UUID
+    public var windowMinutes: Int
+    public var thresholdText: String
+    public var isEnabled: Bool
+
+    public var threshold: Decimal {
+        Decimal(string: thresholdText, locale: Locale(identifier: "en_US_POSIX")) ?? .zero
+    }
+
+    public init(
+        id: UUID = UUID(), windowMinutes: Int, thresholdText: String, isEnabled: Bool = true
+    ) throws {
+        guard (1...60).contains(windowMinutes) else { throw PriceCoreError.invalidWindow }
+        guard let threshold = Decimal(string: thresholdText, locale: Locale(identifier: "en_US_POSIX")),
+              threshold >= Decimal(string: "0.1")!, threshold <= 100 else {
+            throw PriceCoreError.invalidThreshold
+        }
+        self.id = id
+        self.windowMinutes = windowMinutes
+        self.thresholdText = thresholdText
+        self.isEnabled = isEnabled
+    }
 }
 
 public struct AlertRule: Codable, Hashable, Identifiable, Sendable {

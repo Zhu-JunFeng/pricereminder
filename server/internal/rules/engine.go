@@ -17,12 +17,13 @@ type Kind string
 type TargetDirection string
 
 const (
-	Rise       Direction       = "rise"
-	Fall       Direction       = "fall"
-	Percentage Kind            = "percentage"
-	Target     Kind            = "target"
-	Above      TargetDirection = "above"
-	Below      TargetDirection = "below"
+	Rise             Direction       = "rise"
+	Fall             Direction       = "fall"
+	Percentage       Kind            = "percentage"
+	MarketPercentage Kind            = "market_percentage"
+	Target           Kind            = "target"
+	Above            TargetDirection = "above"
+	Below            TargetDirection = "below"
 )
 
 type Rule struct {

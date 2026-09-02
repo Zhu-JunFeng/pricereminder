@@ -136,6 +136,25 @@ func consecutivePriceTrendRequiresTwoMatchingMovements() throws {
     try expect(tracker.update(price: 98) == .fall, "two new falls must show the fall trend")
 }
 
+func marketScannerUsesRollingExtremesAndIndependentResets() throws {
+    var scanner = MarketScanner()
+    let rule = try MarketAlertRule(windowMinutes: 5, thresholdText: "4")
+    let inputs: [(Int64, String)] = [(0, "100"), (30_000, "98"), (60_000, "102"), (61_000, "97"), (62_000, "102")]
+    let directions = try inputs.flatMap { eventTime, price in
+        scanner.evaluate(rule: rule, current: try PricePoint(symbol: "BTCUSDT", priceText: price, eventTime: eventTime)).map(\.direction)
+    }
+    try expect(directions == [.rise, .fall, .rise], "market directions must use extremes and reset independently")
+
+    var sparseScanner = MarketScanner()
+    let sparseRule = try MarketAlertRule(windowMinutes: 1, thresholdText: "5")
+    _ = sparseScanner.evaluate(rule: sparseRule, current: try PricePoint(symbol: "ETHUSDT", priceText: "100", eventTime: 0))
+    let afterGap = try PricePoint(symbol: "ETHUSDT", priceText: "105", eventTime: 40_001)
+    try expect(
+        sparseScanner.evaluate(rule: sparseRule, current: afterGap).map(\.direction) == [.rise],
+        "market rule must retain valid sparse trades inside its configured window"
+    )
+}
+
 do {
     try equalThresholdTriggersAndRearms()
     try directionsAreIndependent()
@@ -146,6 +165,7 @@ do {
     try decodesServerRelayEvents()
     try recentContractsLeadMatchingResultsWithoutChangingTheRest()
     try consecutivePriceTrendRequiresTwoMatchingMovements()
+    try marketScannerUsesRollingExtremesAndIndependentResets()
     print("PriceCore checks passed")
 } catch {
     fputs("PriceCore check failed: \(error)\n", stderr)

@@ -45,6 +45,7 @@ internal sealed class MainForm : Form
     private bool updatingTraySymbols;
     private bool updatingContractCombos;
     private Guid? editingRuleId;
+    private Guid? editingMarketRuleId;
 
     public event Action? TestNotificationRequested;
 
@@ -115,12 +116,15 @@ internal sealed class MainForm : Form
             updatedLabel.Text = "等待第一条价格";
         }
         var lastReceived = snapshot.LastReceivedAt?.ToLocalTime().ToString("HH:mm:ss", CultureInfo.InvariantCulture) ?? "尚未收到";
+        var lastMarketReceived = snapshot.LastMarketReceivedAt?.ToLocalTime().ToString("HH:mm:ss", CultureInfo.InvariantCulture) ?? "尚未收到";
         var latestEvent = snapshot.Prices.Values.Select(item => item.EventTime).DefaultIfEmpty(0).Max();
         var delay = latestEvent == 0 ? "尚未收到行情" : $"{Math.Max(0, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - latestEvent) / 1000.0:F1} 秒";
         diagnosticsLabel.Text =
             $"连接路径：{(snapshot.Source == ConnectionSource.Direct ? "终端直连" : "服务端中继")}\r\n" +
             $"订阅合约：{snapshot.SubscribedCount} 个\r\n行情延迟：{delay}\r\n最后接收：{lastReceived}\r\n" +
             $"重连次数：{snapshot.ReconnectCount}" +
+            $"\r\n全市场扫描：{snapshot.MarketMessage}\r\n全市场覆盖：{snapshot.MarketContractCount} 个合约" +
+            $"\r\n全市场最后接收：{lastMarketReceived}" +
             (string.IsNullOrWhiteSpace(snapshot.LastError) ? "" : $"\r\n最近错误：{snapshot.LastError}");
     }
 
@@ -250,8 +254,7 @@ internal sealed class MainForm : Form
         ruleThreshold.Minimum = .1m; ruleThreshold.Maximum = 100; ruleThreshold.DecimalPlaces = 1; ruleThreshold.Increment = .1m; ruleThreshold.Value = 3; ruleThreshold.Width = 82;
         targetPrice.Minimum = .00000001m; targetPrice.Maximum = 1000000000; targetPrice.DecimalPlaces = 8; targetPrice.Increment = 1; targetPrice.Width = 118;
         ruleKind.DropDownStyle = ComboBoxStyle.DropDownList;
-        ruleKind.Items.AddRange(["涨跌幅", "目标价格"]);
-        ruleKind.SelectedIndex = 0;
+        ConfigureRuleKinds("单合约", "全市场", "目标价格");
         ruleKind.Width = 92;
         targetDirection.DropDownStyle = ComboBoxStyle.DropDownList;
         targetDirection.Items.AddRange(["达到或高于", "达到或低于"]);
@@ -397,16 +400,45 @@ internal sealed class MainForm : Form
     private void SaveRule()
     {
         var symbol = ruleSymbol.Text.Trim().ToUpperInvariant();
-        if (!contracts.Any(item => item.Symbol == symbol))
+        var isMarket = ruleKind.Text == "全市场";
+        if (!isMarket && !contracts.Any(item => item.Symbol == symbol))
         {
             MessageBox.Show(this, "请选择有效的 U 本位永续合约。", "无法添加规则", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             return;
         }
-        var isTarget = ruleKind.SelectedIndex == 1;
+        var isTarget = ruleKind.Text == "目标价格";
         var threshold = ruleThreshold.Value.ToString("0.0", CultureInfo.InvariantCulture);
         var target = targetPrice.Value.ToString("0.########", CultureInfo.InvariantCulture);
         var targetDirectionValue = targetDirection.SelectedIndex == 0 ? TargetDirection.Above : TargetDirection.Below;
-        if ((editingRuleId is null && store.State.Rules.Count >= 50) || store.State.Rules.Any(rule => rule.Id != editingRuleId && (isTarget
+        if (isMarket)
+        {
+            if ((editingMarketRuleId is null && store.State.Rules.Count + store.State.MarketRules.Count >= 50) ||
+                store.State.MarketRules.Any(rule => rule.Id != editingMarketRuleId &&
+                    rule.WindowMinutes == (int)ruleWindow.Value && rule.ThresholdText == threshold))
+            {
+                MessageBox.Show(this, "规则已存在，或已达到 50 条上限。", "无法添加规则", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+            var marketRule = new MarketAlertRule
+            {
+                Id = editingMarketRuleId ?? Guid.NewGuid(), WindowMinutes = (int)ruleWindow.Value,
+                ThresholdText = threshold,
+            };
+            if (editingMarketRuleId is { } marketId)
+            {
+                var index = store.State.MarketRules.FindIndex(rule => rule.Id == marketId);
+                if (index < 0) return;
+                marketRule.Enabled = store.State.MarketRules[index].Enabled;
+                store.State.MarketRules[index] = marketRule;
+            }
+            else store.State.MarketRules.Add(marketRule);
+            store.Save();
+            RefreshRules();
+            CancelRuleEditing();
+            monitor.SubscriptionsChanged();
+            return;
+        }
+        if ((editingRuleId is null && store.State.Rules.Count + store.State.MarketRules.Count >= 50) || store.State.Rules.Any(rule => rule.Id != editingRuleId && (isTarget
             ? rule.Kind == AlertRuleKind.Target && rule.Symbol == symbol && rule.TargetDirection == targetDirectionValue && rule.TargetPriceText == target
             : rule.Kind == AlertRuleKind.Percentage && rule.Symbol == symbol && rule.WindowMinutes == (int)ruleWindow.Value && rule.ThresholdText == threshold)))
         {
@@ -450,11 +482,26 @@ internal sealed class MainForm : Form
 
     private void BeginRuleEditing(ListViewItem item)
     {
+        if (item.Tag is string marketTag && marketTag.StartsWith("market:", StringComparison.Ordinal) &&
+            Guid.TryParse(marketTag[7..], out var marketId))
+        {
+            var marketRule = store.State.MarketRules.First(value => value.Id == marketId);
+            editingMarketRuleId = marketId;
+            editingRuleId = null;
+            ConfigureRuleKinds("全市场");
+            ruleWindow.Value = marketRule.WindowMinutes;
+            ruleThreshold.Value = marketRule.Threshold;
+            saveRuleButton.Text = "保存修改";
+            cancelRuleEditButton.Visible = true;
+            return;
+        }
         if (item.Tag is not Guid id) return;
         var rule = store.State.Rules.First(value => value.Id == id);
         editingRuleId = id;
+        editingMarketRuleId = null;
         ruleSymbol.Text = rule.Symbol;
-        ruleKind.SelectedIndex = rule.Kind == AlertRuleKind.Target ? 1 : 0;
+        ConfigureRuleKinds("单合约", "目标价格");
+        ruleKind.SelectedItem = rule.Kind == AlertRuleKind.Target ? "目标价格" : "单合约";
         ruleWindow.Value = Math.Clamp(rule.WindowMinutes == 0 ? 5 : rule.WindowMinutes, 1, 60);
         ruleThreshold.Value = Math.Clamp(rule.Threshold, ruleThreshold.Minimum, ruleThreshold.Maximum);
         targetDirection.SelectedIndex = rule.TargetDirection == TargetDirection.Below ? 1 : 0;
@@ -466,8 +513,9 @@ internal sealed class MainForm : Form
     private void CancelRuleEditing()
     {
         editingRuleId = null;
+        editingMarketRuleId = null;
         ruleSymbol.Text = store.State.PrimarySymbol;
-        ruleKind.SelectedIndex = 0;
+        ConfigureRuleKinds("单合约", "全市场", "目标价格");
         ruleWindow.Value = 5;
         ruleThreshold.Value = 3;
         targetDirection.SelectedIndex = 0;
@@ -477,7 +525,18 @@ internal sealed class MainForm : Form
 
     private void ToggleSelectedRule()
     {
-        if (rulesList.SelectedItems.Count == 0 || rulesList.SelectedItems[0].Tag is not Guid id) return;
+        if (rulesList.SelectedItems.Count == 0) return;
+        if (rulesList.SelectedItems[0].Tag is string marketTag && marketTag.StartsWith("market:", StringComparison.Ordinal) &&
+            Guid.TryParse(marketTag[7..], out var marketId))
+        {
+            var marketRule = store.State.MarketRules.First(item => item.Id == marketId);
+            marketRule.Enabled = !marketRule.Enabled;
+            store.Save();
+            RefreshRules();
+            monitor.SubscriptionsChanged();
+            return;
+        }
+        if (rulesList.SelectedItems[0].Tag is not Guid id) return;
         var rule = store.State.Rules.First(item => item.Id == id);
         rule.Enabled = !rule.Enabled;
         rule.RiseTriggered = false;
@@ -491,7 +550,17 @@ internal sealed class MainForm : Form
 
     private void DeleteSelectedRule()
     {
-        if (rulesList.SelectedItems.Count == 0 || rulesList.SelectedItems[0].Tag is not Guid id) return;
+        if (rulesList.SelectedItems.Count == 0) return;
+        if (rulesList.SelectedItems[0].Tag is string marketTag && marketTag.StartsWith("market:", StringComparison.Ordinal) &&
+            Guid.TryParse(marketTag[7..], out var marketId))
+        {
+            store.State.MarketRules.RemoveAll(rule => rule.Id == marketId);
+            store.Save();
+            RefreshRules();
+            monitor.SubscriptionsChanged();
+            return;
+        }
+        if (rulesList.SelectedItems[0].Tag is not Guid id) return;
         store.State.Rules.RemoveAll(rule => rule.Id == id);
         store.Save();
         RefreshRules();
@@ -512,16 +581,34 @@ internal sealed class MainForm : Form
                 rule.Enabled ? "已启用" : "已暂停",
             }) { Tag = rule.Id, ForeColor = rule.Enabled ? Ink : Muted, ImageIndex = 0 });
         }
+        foreach (var rule in store.State.MarketRules)
+        {
+            rulesList.Items.Add(new ListViewItem(new[] {
+                "全部 USDT 永续", $"{rule.WindowMinutes} 分钟内上涨或下跌 ≥ {rule.ThresholdText}%",
+                rule.Enabled ? "已启用" : "已暂停",
+            }) { Tag = $"market:{rule.Id}", ForeColor = rule.Enabled ? Ink : Muted, ImageIndex = 0 });
+        }
         rulesList.EndUpdate();
     }
 
     private void UpdateRuleFields()
     {
-        var target = ruleKind.SelectedIndex == 1;
+        var market = ruleKind.Text == "全市场";
+        var target = ruleKind.Text == "目标价格";
+        ruleSymbol.Enabled = !market;
         if (ruleWindowField is not null) ruleWindowField.Visible = !target;
         if (ruleThresholdField is not null) ruleThresholdField.Visible = !target;
         if (targetDirectionField is not null) targetDirectionField.Visible = target;
         if (targetPriceField is not null) targetPriceField.Visible = target;
+    }
+
+    private void ConfigureRuleKinds(params string[] values)
+    {
+        ruleKind.BeginUpdate();
+        ruleKind.Items.Clear();
+        ruleKind.Items.AddRange(values);
+        ruleKind.SelectedIndex = 0;
+        ruleKind.EndUpdate();
     }
 
     private void UpdateTraySymbolList()

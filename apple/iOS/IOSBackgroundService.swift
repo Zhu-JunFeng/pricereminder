@@ -22,7 +22,10 @@ actor IOSBackgroundService {
     private var version = Int64(UserDefaults.standard.integer(forKey: versionKey))
     private var foreground = false
 
-    func enterForeground(rules: [AlertRule], monitoringEnabled: Bool, primarySymbol: String) async throws -> ForegroundState {
+    func enterForeground(
+        rules: [AlertRule], marketRules: [MarketAlertRule],
+        monitoringEnabled: Bool, primarySymbol: String
+    ) async throws -> ForegroundState {
         foreground = true
         let api = try await authenticatedClient()
         let remote = try await api.iosRules()
@@ -30,7 +33,10 @@ actor IOSBackgroundService {
             version = max(version, remote.version)
         }
         let reconciled = reconcile(local: rules, remote: remote?.rules ?? [])
-        try await sync(rules: reconciled, monitoringEnabled: monitoringEnabled, primarySymbol: primarySymbol)
+        try await sync(
+            rules: reconciled, marketRules: marketRules,
+            monitoringEnabled: monitoringEnabled, primarySymbol: primarySymbol
+        )
         let events = try await api.iosEvents()
         return ForegroundState(rules: reconciled, events: events)
     }
@@ -39,12 +45,17 @@ actor IOSBackgroundService {
         foreground = false
     }
 
-    func sync(rules: [AlertRule], monitoringEnabled: Bool, primarySymbol: String) async throws {
+    func sync(
+        rules: [AlertRule], marketRules: [MarketAlertRule],
+        monitoringEnabled: Bool, primarySymbol: String
+    ) async throws {
         let api = try await authenticatedClient()
         let symbols = Array(Set(rules.filter(\.isEnabled).map(\.symbol) + [primarySymbol])).sorted()
         try await api.setSubscriptions(symbols)
         version = max(version + 1, Int64(Date().timeIntervalSince1970 * 1_000))
-        try await api.setIOSRules(version: version, monitoringEnabled: monitoringEnabled, rules: rules)
+        try await api.setIOSRules(
+            version: version, monitoringEnabled: monitoringEnabled, rules: rules, marketRules: marketRules
+        )
         UserDefaults.standard.set(version, forKey: Self.versionKey)
         if foreground {
             try await api.renewIOSLease(version: version)

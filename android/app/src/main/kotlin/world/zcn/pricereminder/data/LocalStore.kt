@@ -39,6 +39,12 @@ class LocalStore(context: Context) {
         preferences.edit().putString("rules", json.encodeToString(rules)).apply()
     }
 
+    fun marketRules(): List<StoredMarketRule> = decodeList(preferences.getString("market_rules", null))
+
+    fun saveMarketRules(rules: List<StoredMarketRule>) {
+        preferences.edit().putString("market_rules", json.encodeToString(rules)).apply()
+    }
+
     fun history(): List<TriggerHistory> = decodeList(preferences.getString("history", null))
 
     fun appendHistory(items: List<TriggerHistory>) {

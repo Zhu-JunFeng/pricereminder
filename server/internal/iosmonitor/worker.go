@@ -37,9 +37,10 @@ type Rule struct {
 }
 
 type Snapshot struct {
-	Version           int64  `json:"version"`
-	MonitoringEnabled bool   `json:"monitoringEnabled"`
-	Rules             []Rule `json:"rules"`
+	Version           int64              `json:"version"`
+	MonitoringEnabled bool               `json:"monitoringEnabled"`
+	Rules             []Rule             `json:"rules"`
+	MarketRules       []rules.MarketRule `json:"marketRules,omitempty"`
 }
 
 type cachedSnapshot struct {
@@ -49,19 +50,22 @@ type cachedSnapshot struct {
 }
 
 type Worker struct {
-	store  *store.Store
-	buffer *pricebuffer.Buffer
-	push   *apns.Client
-	logger *slog.Logger
-	prices chan domain.PricePoint
-	mu     sync.RWMutex
-	items  map[uuid.UUID]cachedSnapshot
+	store          *store.Store
+	buffer         *pricebuffer.Buffer
+	push           *apns.Client
+	logger         *slog.Logger
+	prices         chan domain.PricePoint
+	marketPrices   chan domain.PricePoint
+	mu             sync.RWMutex
+	items          map[uuid.UUID]cachedSnapshot
+	marketScanners map[uuid.UUID]*rules.MarketScanner
 }
 
 func New(dataStore *store.Store, buffer *pricebuffer.Buffer, push *apns.Client, logger *slog.Logger) *Worker {
 	return &Worker{
 		store: dataStore, buffer: buffer, push: push, logger: logger,
-		prices: make(chan domain.PricePoint, 2048), items: make(map[uuid.UUID]cachedSnapshot),
+		prices: make(chan domain.PricePoint, 2048), marketPrices: make(chan domain.PricePoint, 8192),
+		items: make(map[uuid.UUID]cachedSnapshot), marketScanners: make(map[uuid.UUID]*rules.MarketScanner),
 	}
 }
 
@@ -69,8 +73,26 @@ func ValidateSnapshot(snapshot Snapshot, validSymbol func(string) bool) (Snapsho
 	if snapshot.Version < 1 {
 		return Snapshot{}, errors.New("version must be positive")
 	}
-	if len(snapshot.Rules) > 50 {
+	if len(snapshot.Rules)+len(snapshot.MarketRules) > 50 {
 		return Snapshot{}, errors.New("每台设备最多 50 条规则")
+	}
+	marketSeen := make(map[string]struct{}, len(snapshot.MarketRules))
+	for index := range snapshot.MarketRules {
+		item := &snapshot.MarketRules[index]
+		if _, err := uuid.Parse(item.ID); err != nil {
+			return Snapshot{}, errors.New("market rule id must be UUID")
+		}
+		rule, err := rules.NewMarketRule(item.ID, item.WindowMinutes, item.ThresholdText)
+		if err != nil {
+			return Snapshot{}, err
+		}
+		rule.Enabled = item.Enabled
+		*item = rule
+		key := strconv.Itoa(item.WindowMinutes) + ":" + item.ThresholdText
+		if _, exists := marketSeen[key]; exists {
+			return Snapshot{}, errors.New("相同窗口和阈值的全市场规则已存在")
+		}
+		marketSeen[key] = struct{}{}
 	}
 	seen := make(map[string]struct{}, len(snapshot.Rules))
 	for index := range snapshot.Rules {
@@ -136,6 +158,7 @@ func (w *Worker) ReplaceSnapshot(deviceID uuid.UUID, snapshot Snapshot) {
 	defer w.mu.Unlock()
 	current := w.items[deviceID]
 	w.items[deviceID] = cachedSnapshot{DeviceID: deviceID, Snapshot: snapshot, LeaseUntil: current.LeaseUntil}
+	delete(w.marketScanners, deviceID)
 }
 
 func (w *Worker) RenewLease(deviceID uuid.UUID, version int64, until time.Time) {
@@ -149,7 +172,24 @@ func (w *Worker) RenewLease(deviceID uuid.UUID, version int64, until time.Time) 
 	w.items[deviceID] = item
 }
 
-func (w *Worker) Publish(point domain.PricePoint) { w.prices <- point }
+func (w *Worker) Publish(point domain.PricePoint)       { w.prices <- point }
+func (w *Worker) PublishMarket(point domain.PricePoint) { w.marketPrices <- point }
+
+func (w *Worker) MarketEnabled() bool {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	for _, cached := range w.items {
+		if !cached.Snapshot.MonitoringEnabled {
+			continue
+		}
+		for _, rule := range cached.Snapshot.MarketRules {
+			if rule.Enabled {
+				return true
+			}
+		}
+	}
+	return false
+}
 
 func (w *Worker) Run(ctx context.Context) {
 	deliveryTicker := time.NewTicker(15 * time.Second)
@@ -163,12 +203,51 @@ func (w *Worker) Run(ctx context.Context) {
 		case point := <-w.prices:
 			w.evaluate(ctx, point)
 			w.updateLiveActivities(ctx, point)
+		case point := <-w.marketPrices:
+			w.evaluateMarket(ctx, point)
 		case <-deliveryTicker.C:
 			w.deliverPending(ctx)
 		case <-cleanupTicker.C:
 			if err := w.store.CleanupIOSData(ctx); err != nil {
 				w.logger.Error("clean iOS data", "error", err)
 			}
+		}
+	}
+}
+
+func (w *Worker) evaluateMarket(ctx context.Context, point domain.PricePoint) {
+	now := time.Now()
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	for deviceID, cached := range w.items {
+		if !cached.Snapshot.MonitoringEnabled || cached.LeaseUntil.After(now) || len(cached.Snapshot.MarketRules) == 0 {
+			delete(w.marketScanners, deviceID)
+			continue
+		}
+		scanner := w.marketScanners[deviceID]
+		if scanner == nil {
+			scanner = rules.NewMarketScanner()
+			w.marketScanners[deviceID] = scanner
+		}
+		ids := make(map[string]struct{})
+		var triggers []rules.Trigger
+		for _, rule := range cached.Snapshot.MarketRules {
+			if !rule.Enabled {
+				continue
+			}
+			ids[rule.ID] = struct{}{}
+			triggers = append(triggers, scanner.Evaluate(rule, point)...)
+		}
+		scanner.RetainRules(ids)
+		if len(triggers) == 0 {
+			continue
+		}
+		eventID, payload := makeEvent(deviceID, point, triggers)
+		created, err := w.store.CreateIOSEventIfBackground(ctx, deviceID, cached.Snapshot.Version, eventID, payload)
+		if err != nil {
+			w.logger.Error("create iOS market event", "device_id", deviceID, "error", err)
+		} else if created {
+			w.logger.Info("iOS background market alert created", "device_id", deviceID, "event_id", eventID)
 		}
 	}
 }

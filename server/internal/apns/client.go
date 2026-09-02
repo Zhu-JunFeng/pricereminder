@@ -102,9 +102,13 @@ func makeAlertPayload(eventID string, payload json.RawMessage) ([]byte, error) {
 		parts = append(parts, fmt.Sprintf("%d分钟%s %s%%（阈值 %s%%）", trigger.WindowMinutes, direction, trigger.ChangePct, trigger.ThresholdPct))
 	}
 	body := strings.Join(parts, "；") + " · 最新价 " + event.Triggers[0].Price
+	title := event.Symbol + " 价格预警"
+	if event.Triggers[0].Kind == "market_percentage" {
+		title = event.Symbol + " 全市场预警"
+	}
 	return json.Marshal(map[string]any{
 		"aps": map[string]any{
-			"alert": map[string]string{"title": event.Symbol + " 价格预警", "body": body},
+			"alert": map[string]string{"title": title, "body": body},
 			"sound": "default",
 		},
 		"eventId": eventID,

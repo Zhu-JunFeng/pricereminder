@@ -36,7 +36,23 @@
 
 ### `PUT /v1/ios/rules`
 
-iOS 原子提交完整规则快照、规则版本、`monitoringEnabled` 和方向状态；服务端只保存用于后台接管的最小副本。旧版本返回 `409 stale_rule_version`。
+iOS 原子提交完整规则快照、规则版本、`monitoringEnabled` 和方向状态；服务端只保存用于后台接管的最小副本。单合约规则与全市场规则合计最多 50 条，全市场规则按“窗口 + 阈值”去重。旧版本返回 `409 stale_rule_version`。
+
+```json
+{
+  "version": 1787363070123,
+  "monitoringEnabled": true,
+  "rules": [],
+  "marketRules": [
+    {
+      "id": "2ec8da9c-6ff3-4a4d-a77b-6077177be734",
+      "windowMinutes": 5,
+      "thresholdText": "4",
+      "isEnabled": true
+    }
+  ]
+}
+```
 
 ### `GET /v1/ios/rules`
 
@@ -114,3 +130,5 @@ iOS 前台每 10 秒续租，租约有效期 25 秒。服务端仅在租约超�
 ## 币安上游
 
 服务端通过 `wss://fstream.binance.com/ws` 动态订阅所有有效终端配置的 `<symbol>@trade`，忽略价格或数量为 0 的非成交事件，再按币安事件时间合并为每秒最后一笔。该公开行情接口无需 API Key；币安当前不按请求收费，但仍受官方连接和订阅限制约束。
+
+当至少一台 iPhone 配置了已启用的全市场规则时，服务端另外连接 `wss://fstream.binance.com/ws/!miniTicker@arr`。仅接收 `e=24hrMiniTicker`、`c>0` 且位于当前 Binance USDT 永续合约目录中的事件；`E` 作为规则事件时间。该流只供 iPhone 后台扫描，不通过 `/v1/stream` 转发，也没有备用行情源。

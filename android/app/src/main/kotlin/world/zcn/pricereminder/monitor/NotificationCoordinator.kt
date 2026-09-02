@@ -40,7 +40,7 @@ class NotificationCoordinator(private val context: Context) {
         }
         manager.notify(("alert:$symbol:${triggers.first().eventTime}").hashCode(), NotificationCompat.Builder(context, ALERT_CHANNEL)
             .setSmallIcon(android.R.drawable.stat_notify_more)
-            .setContentTitle("$symbol 价格预警")
+            .setContentTitle(if (triggers.any { it.kind.name == "MARKET_PERCENTAGE" }) "$symbol 全市场预警" else "$symbol 价格预警")
             .setContentText(summary)
             .setStyle(NotificationCompat.BigTextStyle().bigText("$summary\n最新价 ${triggers.first().priceText}"))
             .setAutoCancel(true)

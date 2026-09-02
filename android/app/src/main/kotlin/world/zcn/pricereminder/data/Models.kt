@@ -18,6 +18,14 @@ data class StoredRule(
 )
 
 @Serializable
+data class StoredMarketRule(
+    val id: String,
+    val windowMinutes: Int,
+    val thresholdText: String,
+    val enabled: Boolean = true,
+)
+
+@Serializable
 data class TriggerHistory(
     val id: String,
     val symbol: String,
@@ -86,6 +94,14 @@ data class BinanceTradeDto(
     @kotlinx.serialization.SerialName("s") val symbol: String,
     @kotlinx.serialization.SerialName("p") val price: String,
     @kotlinx.serialization.SerialName("q") val quantity: String,
+)
+
+@Serializable
+data class MarketMiniTickerDto(
+    @kotlinx.serialization.SerialName("e") val eventType: String,
+    @kotlinx.serialization.SerialName("E") val eventTime: Long,
+    @kotlinx.serialization.SerialName("s") val symbol: String,
+    @kotlinx.serialization.SerialName("c") val closePrice: String,
 )
 
 @Serializable

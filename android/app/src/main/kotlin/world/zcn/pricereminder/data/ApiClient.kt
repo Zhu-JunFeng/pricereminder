@@ -24,6 +24,8 @@ class ApiClient(
     suspend fun contracts(): List<ContractDto> = runCatching { directContracts() }
         .getOrElse { serverContracts() }
 
+    suspend fun binanceContracts(): List<ContractDto> = directContracts()
+
     private suspend fun directContracts(): List<ContractDto> = withContext(Dispatchers.IO) {
         val response = http.newCall(
             Request.Builder().url("https://fapi.binance.com/fapi/v1/exchangeInfo").build()
@@ -52,6 +54,9 @@ class ApiClient(
         require(streams.isNotEmpty()) { "至少选择一个合约" }
         return Request.Builder().url("wss://fstream.binance.com/stream?streams=$streams").build()
     }
+
+    fun allMarketRequest(): Request = Request.Builder()
+        .url("wss://fstream.binance.com/ws/!miniTicker@arr").build()
 
     suspend fun serverStreamRequest(symbols: List<String>): Request = withContext(Dispatchers.IO) {
         val token = authenticatedToken()

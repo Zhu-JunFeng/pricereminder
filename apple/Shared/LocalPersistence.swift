@@ -56,6 +56,8 @@ enum LocalPersistence {
 
     static func loadRules() -> [AlertRule] { load("rules.json") }
     static func saveRules(_ rules: [AlertRule]) { save(rules, name: "rules.json") }
+    static func loadMarketRules() -> [MarketAlertRule] { load("market-rules.json") }
+    static func saveMarketRules(_ rules: [MarketAlertRule]) { save(rules, name: "market-rules.json") }
     static func loadHistory() -> [TriggerRecord] { load("history.json") }
     static func saveHistory(_ history: [TriggerRecord]) { save(history, name: "history.json") }
 

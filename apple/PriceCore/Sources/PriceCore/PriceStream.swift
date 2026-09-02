@@ -52,6 +52,7 @@ public actor PriceStream {
     private let streamURL: URL
     private let session: URLSession
     private var task: URLSessionWebSocketTask?
+    private var marketReceiverTasks: [Task<Void, Never>] = []
 
     public init(
         streamURL: URL = URL(string: "wss://fstream.binance.com/stream")!,
@@ -59,6 +60,74 @@ public actor PriceStream {
     ) {
         self.streamURL = streamURL
         self.session = session
+    }
+
+    public func connectAllMarket(symbols: [String]) async throws -> AsyncThrowingStream<[PricePoint], Error> {
+        let symbols = Array(Set(symbols.map { $0.uppercased() })).sorted()
+        guard !symbols.isEmpty, symbols.count <= 1_024,
+              symbols.allSatisfy({
+                  (2...30).contains($0.count)
+                      && $0.range(of: "[/@?&#]", options: .regularExpression) == nil
+              }) else {
+            throw PriceCoreError.invalidSubscription
+        }
+        task?.cancel(with: .goingAway, reason: nil)
+        task = nil
+        marketReceiverTasks.forEach { $0.cancel() }
+        let requests = try stride(from: 0, to: symbols.count, by: 150).map { start in
+            guard var components = URLComponents(url: streamURL, resolvingAgainstBaseURL: false) else {
+                throw PriceCoreError.invalidExchangeResponse
+            }
+            let chunk = symbols[start..<min(start + 150, symbols.count)]
+            components.queryItems = [
+                URLQueryItem(
+                    name: "streams",
+                    value: chunk.map { $0.lowercased() + "@trade" }.joined(separator: "/")
+                )
+            ]
+            guard let url = components.url else { throw PriceCoreError.invalidExchangeResponse }
+            var request = URLRequest(url: url, timeoutInterval: 10)
+            request.setValue("PriceReminder", forHTTPHeaderField: "User-Agent")
+            return request
+        }
+
+        let (updates, continuation) = AsyncThrowingStream<[PricePoint], Error>.makeStream()
+        marketReceiverTasks = requests.map { request in
+            Task {
+                while !Task.isCancelled {
+                    let socket = session.webSocketTask(with: request)
+                    socket.resume()
+                    do {
+                        var latestBySymbol: [String: PricePoint] = [:]
+                        var batchSecond: Int64?
+                        while !Task.isCancelled {
+                            let frame = try await socket.receive()
+                            let data: Data
+                            switch frame {
+                            case .data(let value): data = value
+                            case .string(let value): data = Data(value.utf8)
+                            @unknown default: continue
+                            }
+                            guard let point = try Self.decodeEvent(from: data) else { continue }
+                            let second = point.eventTime / 1_000
+                            if let batchSecond, second > batchSecond, !latestBySymbol.isEmpty {
+                                continuation.yield(latestBySymbol.values.sorted { $0.symbol < $1.symbol })
+                                latestBySymbol.removeAll(keepingCapacity: true)
+                            }
+                            latestBySymbol[point.symbol] = point
+                            batchSecond = max(batchSecond ?? second, second)
+                        }
+                    } catch {
+                        socket.cancel(with: .goingAway, reason: nil)
+                        guard !Task.isCancelled else { return }
+                        try? await Task.sleep(for: .seconds(1))
+                    }
+                }
+            }
+        }
+        let receiverTasks = marketReceiverTasks
+        continuation.onTermination = { _ in receiverTasks.forEach { $0.cancel() } }
+        return updates
     }
 
     public func connect(symbols: [String]) async throws -> AsyncThrowingStream<PriceStreamEvent, Error> {
@@ -76,6 +145,8 @@ public actor PriceStream {
         ]
         guard let url = components.url else { throw PriceCoreError.invalidExchangeResponse }
 
+        marketReceiverTasks.forEach { $0.cancel() }
+        marketReceiverTasks.removeAll()
         task?.cancel(with: .goingAway, reason: nil)
         var request = URLRequest(url: url, timeoutInterval: 10)
         request.setValue("PriceReminder", forHTTPHeaderField: "User-Agent")
@@ -93,6 +164,8 @@ public actor PriceStream {
     public func connect(
         serverURL: URL, token: String, lastEventTimes: [String: Int64]
     ) async throws -> AsyncThrowingStream<PriceStreamEvent, Error> {
+        marketReceiverTasks.forEach { $0.cancel() }
+        marketReceiverTasks.removeAll()
         task?.cancel(with: .goingAway, reason: nil)
         var request = URLRequest(url: serverURL, timeoutInterval: 10)
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
@@ -154,6 +227,8 @@ public actor PriceStream {
     public func disconnect() {
         task?.cancel(with: .normalClosure, reason: nil)
         task = nil
+        marketReceiverTasks.forEach { $0.cancel() }
+        marketReceiverTasks.removeAll()
     }
 
     package static func decodeEvent(from data: Data) throws -> PricePoint? {

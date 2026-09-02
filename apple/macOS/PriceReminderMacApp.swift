@@ -135,6 +135,7 @@ struct MacSettingsView: View {
     @State private var testResult: String?
     @State private var showingRuleContracts = false
     @State private var editingRuleID: UUID?
+    @State private var editingMarketRuleID: UUID?
 
     var body: some View {
         TabView {
@@ -172,32 +173,43 @@ struct MacSettingsView: View {
 
             VStack(alignment: .leading, spacing: 12) {
                 Text("预警规则").font(.title2.weight(.semibold))
-                Text("同时支持滚动涨跌幅和目标价格提醒。")
+                Text("支持单合约、全市场涨跌幅和目标价格提醒。")
                     .foregroundStyle(.secondary)
 
                 Picker("提醒类型", selection: $ruleKind) {
-                    Text("涨跌幅").tag(AlertRuleKind.percentage)
-                    Text("目标价格").tag(AlertRuleKind.target)
+                    if editingMarketRuleID != nil {
+                        Text("全市场").tag(AlertRuleKind.marketPercentage)
+                    } else {
+                        Text("单合约").tag(AlertRuleKind.percentage)
+                        if editingRuleID == nil {
+                            Text("全市场").tag(AlertRuleKind.marketPercentage)
+                        }
+                        Text("目标价格").tag(AlertRuleKind.target)
+                    }
                 }
                 .pickerStyle(.segmented)
 
                 HStack(spacing: 10) {
-                    Button { showingRuleContracts.toggle() } label: {
-                        HStack(spacing: 6) {
-                            Text(ruleSymbol)
-                            Image(systemName: "chevron.up.chevron.down")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
+                    if ruleKind == .marketPercentage {
+                        Text("全部 USDT 永续").frame(maxWidth: 220, alignment: .leading)
+                    } else {
+                        Button { showingRuleContracts.toggle() } label: {
+                            HStack(spacing: 6) {
+                                Text(ruleSymbol)
+                                Image(systemName: "chevron.up.chevron.down")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
                         }
-                    }
-                    .popover(isPresented: $showingRuleContracts) {
-                        MacContractPicker(selected: ruleSymbol) {
-                            ruleSymbol = $0
-                            showingRuleContracts = false
+                        .popover(isPresented: $showingRuleContracts) {
+                            MacContractPicker(selected: ruleSymbol) {
+                                ruleSymbol = $0
+                                showingRuleContracts = false
+                            }
                         }
+                        .frame(maxWidth: 220)
                     }
-                    .frame(maxWidth: 220)
-                    if ruleKind == .percentage {
+                    if ruleKind != .target {
                         Stepper("\(ruleWindow) 分钟", value: $ruleWindow, in: 1...60)
                             .frame(width: 135)
                         TextField("阈值 %", text: $ruleThreshold)
@@ -211,9 +223,9 @@ struct MacSettingsView: View {
                         TextField("目标价格", text: $targetPrice)
                             .frame(width: 105)
                     }
-                    Button(editingRuleID == nil ? "添加" : "保存修改") { saveRule() }
+                    Button(editingRuleID == nil && editingMarketRuleID == nil ? "添加" : "保存修改") { saveRule() }
                         .buttonStyle(.borderedProminent)
-                    if editingRuleID != nil {
+                    if editingRuleID != nil || editingMarketRuleID != nil {
                         Button("取消") { cancelEditing() }
                     }
                 }
@@ -222,10 +234,11 @@ struct MacSettingsView: View {
                     Text(ruleError).font(.caption).foregroundStyle(AppTheme.fall)
                 }
 
-                if model.rules.isEmpty {
-                    ContentUnavailableView("还没有预警规则", systemImage: "bell.slash", description: Text("可添加涨跌幅或目标价格提醒。"))
+                if model.rules.isEmpty && model.marketRules.isEmpty {
+                    ContentUnavailableView("还没有预警规则", systemImage: "bell.slash", description: Text("可添加单合约、全市场或目标价格提醒。"))
                 } else {
-                    List(model.rules) { rule in
+                    List {
+                        ForEach(model.rules) { rule in
                         HStack(spacing: 12) {
                             VStack(alignment: .leading, spacing: 3) {
                                 Text(rule.symbol).font(.headline)
@@ -248,6 +261,26 @@ struct MacSettingsView: View {
                             }
                             .buttonStyle(.borderless)
                         }
+                        }
+                        ForEach(model.marketRules) { rule in
+                            HStack(spacing: 12) {
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text("全部 USDT 永续").font(.headline)
+                                    Text("\(rule.windowMinutes)分钟内涨跌 ≥ \(rule.thresholdText)%")
+                                        .foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                                Toggle("", isOn: Binding(
+                                    get: { rule.isEnabled },
+                                    set: { model.setMarketRuleEnabled(id: rule.id, enabled: $0) }
+                                )).labelsHidden()
+                                Button { beginEditing(rule) } label: { Image(systemName: "pencil") }
+                                    .buttonStyle(.borderless)
+                                Button(role: .destructive) { model.deleteMarketRule(id: rule.id) } label: {
+                                    Image(systemName: "trash")
+                                }.buttonStyle(.borderless)
+                            }
+                        }
                     }
                 }
             }
@@ -267,6 +300,12 @@ struct MacSettingsView: View {
                     DiagnosticRow(label: "最后接收", value: lastReceivedText)
                     DiagnosticRow(label: "重连次数", value: "\(model.reconnectCount)")
                     DiagnosticRow(label: "通知权限", value: model.notificationStatusLabel)
+                    DiagnosticRow(label: "全市场扫描", value: model.marketStatusMessage)
+                    DiagnosticRow(label: "全市场覆盖", value: "\(model.marketContractCount) 个合约")
+                    DiagnosticRow(
+                        label: "全市场最后接收",
+                        value: model.lastMarketReceivedAt?.formatted(date: .omitted, time: .standard) ?? "尚未收到"
+                    )
                     if let error = model.lastConnectionError {
                         DiagnosticRow(label: "最近错误", value: error)
                     }
@@ -310,6 +349,13 @@ struct MacSettingsView: View {
                     direction: targetDirection, targetPrice: targetPrice
                 )
                 cancelEditing()
+            } else if let editingMarketRuleID {
+                try model.updateMarketRule(
+                    id: editingMarketRuleID, windowMinutes: ruleWindow, threshold: ruleThreshold
+                )
+                cancelEditing()
+            } else if ruleKind == .marketPercentage {
+                try model.addMarketRule(windowMinutes: ruleWindow, threshold: ruleThreshold)
             } else if ruleKind == .percentage {
                 try model.addRule(symbol: ruleSymbol, windowMinutes: ruleWindow, threshold: ruleThreshold)
             } else {
@@ -319,6 +365,15 @@ struct MacSettingsView: View {
         } catch {
             ruleError = error.localizedDescription
         }
+    }
+
+    private func beginEditing(_ rule: MarketAlertRule) {
+        editingMarketRuleID = rule.id
+        editingRuleID = nil
+        ruleKind = .marketPercentage
+        ruleWindow = rule.windowMinutes
+        ruleThreshold = rule.thresholdText
+        ruleError = nil
     }
 
     private func beginEditing(_ rule: AlertRule) {
@@ -334,6 +389,7 @@ struct MacSettingsView: View {
 
     private func cancelEditing() {
         editingRuleID = nil
+        editingMarketRuleID = nil
         ruleSymbol = model.primarySymbol
         ruleWindow = 5
         ruleThreshold = "3"

@@ -5,11 +5,26 @@ public actor APIClient {
         public let version: Int64
         public let monitoringEnabled: Bool
         public let rules: [AlertRule]
+        public let marketRules: [MarketAlertRule]
 
-        public init(version: Int64, monitoringEnabled: Bool, rules: [AlertRule]) {
+        private enum CodingKeys: String, CodingKey { case version, monitoringEnabled, rules, marketRules }
+
+        public init(from decoder: Decoder) throws {
+            let values = try decoder.container(keyedBy: CodingKeys.self)
+            version = try values.decode(Int64.self, forKey: .version)
+            monitoringEnabled = try values.decode(Bool.self, forKey: .monitoringEnabled)
+            rules = try values.decode([AlertRule].self, forKey: .rules)
+            marketRules = try values.decodeIfPresent([MarketAlertRule].self, forKey: .marketRules) ?? []
+        }
+
+        public init(
+            version: Int64, monitoringEnabled: Bool, rules: [AlertRule],
+            marketRules: [MarketAlertRule] = []
+        ) {
             self.version = version
             self.monitoringEnabled = monitoringEnabled
             self.rules = rules
+            self.marketRules = marketRules
         }
     }
 
@@ -25,6 +40,7 @@ public actor APIClient {
         let version: Int64
         let monitoringEnabled: Bool
         let rules: [AlertRule]
+        let marketRules: [MarketAlertRule]
     }
     private struct IOSLeaseRequest: Encodable { let version: Int64 }
     private struct IOSEventsResponse: Decodable { let events: [IOSBackgroundEvent] }
@@ -79,10 +95,14 @@ public actor APIClient {
         )
     }
 
-    public func setIOSRules(version: Int64, monitoringEnabled: Bool, rules: [AlertRule]) async throws {
+    public func setIOSRules(
+        version: Int64, monitoringEnabled: Bool, rules: [AlertRule], marketRules: [MarketAlertRule]
+    ) async throws {
         let _: VersionResponse = try await request(
             path: "/v1/ios/rules", method: "PUT",
-            body: try JSONEncoder().encode(IOSRulesRequest(version: version, monitoringEnabled: monitoringEnabled, rules: rules))
+            body: try JSONEncoder().encode(IOSRulesRequest(
+                version: version, monitoringEnabled: monitoringEnabled, rules: rules, marketRules: marketRules
+            ))
         )
     }
 

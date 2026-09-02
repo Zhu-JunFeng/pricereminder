@@ -13,7 +13,7 @@ data class PricePoint(
 }
 
 enum class TriggerDirection { RISE, FALL }
-enum class AlertRuleKind { PERCENTAGE, TARGET }
+enum class AlertRuleKind { PERCENTAGE, MARKET_PERCENTAGE, TARGET }
 enum class TargetDirection { ABOVE, BELOW }
 
 object ContractOrdering {
@@ -53,6 +53,22 @@ data class AlertRule(
         } else {
             require(targetDirection != null) { "targetDirection is required" }
             require(targetPrice != null && targetPrice > BigDecimal.ZERO) { "targetPrice must be greater than zero" }
+        }
+    }
+}
+
+data class MarketAlertRule(
+    val id: String = UUID.randomUUID().toString(),
+    val windowMinutes: Int,
+    val thresholdText: String,
+    val enabled: Boolean = true,
+) {
+    val threshold: BigDecimal = thresholdText.toBigDecimalOrNull() ?: BigDecimal.ZERO
+
+    init {
+        require(windowMinutes in 1..60) { "windowMinutes must be between 1 and 60" }
+        require(threshold >= BigDecimal("0.1") && threshold <= BigDecimal("100")) {
+            "thresholdPct must be between 0.1 and 100"
         }
     }
 }

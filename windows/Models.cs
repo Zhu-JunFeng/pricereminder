@@ -56,13 +56,24 @@ internal sealed record PricePoint(string Symbol, string PriceText, long EventTim
 }
 
 internal enum TriggerDirection { Rise, Fall }
-internal enum AlertRuleKind { Percentage, Target }
+internal enum AlertRuleKind { Percentage = 0, Target = 1, MarketPercentage = 2 }
 internal enum TargetDirection { Above, Below }
 
 internal sealed record AlertTrigger(
     Guid RuleId, string Symbol, AlertRuleKind Kind, TriggerDirection Direction, decimal? ChangePercent,
     string ThresholdText, int WindowMinutes, string? TargetPriceText,
     string PriceText, string BaselinePriceText, long EventTime);
+
+internal sealed class MarketAlertRule
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public int WindowMinutes { get; set; } = 5;
+    public string ThresholdText { get; set; } = "3";
+    public bool Enabled { get; set; } = true;
+
+    [JsonIgnore]
+    public decimal Threshold => decimal.Parse(ThresholdText, System.Globalization.CultureInfo.InvariantCulture);
+}
 
 internal sealed record TriggerHistory(
     string Id, string Symbol, AlertRuleKind Kind, TriggerDirection Direction, decimal? ChangePercent,
@@ -81,7 +92,10 @@ internal sealed record MonitorSnapshot(
     DateTimeOffset? LastReceivedAt,
     int ReconnectCount,
     string? LastError,
-    int SubscribedCount);
+    int SubscribedCount,
+    string MarketMessage,
+    int MarketContractCount,
+    DateTimeOffset? LastMarketReceivedAt);
 
 internal sealed class PersistedState
 {
@@ -89,6 +103,7 @@ internal sealed class PersistedState
     public List<string> TraySymbols { get; set; } = ["BTCUSDT"];
     public List<string> RecentSymbols { get; set; } = [];
     public List<AlertRule> Rules { get; set; } = [];
+    public List<MarketAlertRule> MarketRules { get; set; } = [];
     public List<TriggerHistory> History { get; set; } = [];
     public Dictionary<string, List<PricePoint>> Prices { get; set; } = [];
     public string? DeviceToken { get; set; }

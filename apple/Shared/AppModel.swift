@@ -16,6 +16,7 @@ final class AppModel: ObservableObject {
     @Published private(set) var prices: [String: PricePoint] = [:]
     @Published private(set) var consecutivePriceTrends: [String: ConsecutivePriceTrend] = [:]
     @Published var rules: [AlertRule] = LocalPersistence.loadRules()
+    @Published var marketRules: [MarketAlertRule] = LocalPersistence.loadMarketRules()
     @Published private(set) var history: [TriggerRecord] = LocalPersistence.loadHistory()
     @Published private(set) var monitorState: MonitorState = .disconnected
     @Published private(set) var statusMessage = "监控未启动"
@@ -24,6 +25,9 @@ final class AppModel: ObservableObject {
     @Published private(set) var reconnectCount = 0
     @Published private(set) var lastConnectionError: String?
     @Published private(set) var liveActivityStatusMessage: String?
+    @Published private(set) var marketStatusMessage = "全市场扫描未启用"
+    @Published private(set) var marketContractCount = 0
+    @Published private(set) var lastMarketReceivedAt: Date?
     @Published var primarySymbol = UserDefaults.standard.string(forKey: "primarySymbol") ?? "BTCUSDT"
     @Published var menuSymbols: [String] = UserDefaults.standard.stringArray(forKey: "menuSymbols") ?? ["BTCUSDT"]
     @Published private(set) var recentSymbols: [String] = {
@@ -34,8 +38,12 @@ final class AppModel: ObservableObject {
 
     private let market: BinanceMarketClient
     private let stream: PriceStream
+    private let marketStream: PriceStream
     private var buffer = PriceBuffer()
+    private var marketScanner = MarketScanner()
+    private var validMarketSymbols: Set<String> = []
     private var streamTask: Task<Void, Never>?
+    private var marketStreamTask: Task<Void, Never>?
     private var relayRetryTask: Task<Void, Never>?
     private var watchdogTask: Task<Void, Never>?
     private var priceFlushTask: Task<Void, Never>?
@@ -60,6 +68,7 @@ final class AppModel: ObservableObject {
     init() {
         self.market = BinanceMarketClient()
         self.stream = PriceStream()
+        self.marketStream = PriceStream()
 
         let restored = LocalPersistence.loadPrices()
         buffer.restore(restored)
@@ -74,6 +83,8 @@ final class AppModel: ObservableObject {
     func bootstrap(platform: String) async {
         do {
             contracts = try await market.contracts()
+            validMarketSymbols = Set(contracts.filter { $0.quoteAsset == "USDT" }.map(\.symbol))
+            connectMarketIfNeeded()
             if !monitoringEnabled {
                 statusMessage = "可直接连接币安行情"
             }
@@ -82,6 +93,7 @@ final class AppModel: ObservableObject {
                 contracts = try await ServerConnectionService.shared.contracts(
                     platform: platform, displayName: platform == "macos" ? "Mac" : "iPhone"
                 )
+                connectMarketIfNeeded()
                 if !monitoringEnabled {
                     statusMessage = "通过服务端获取币安合约"
                 }
@@ -106,6 +118,7 @@ final class AppModel: ObservableObject {
         lastReceivedAt = nil
         connectionFailureNotified = false
         connect()
+        connectMarketIfNeeded()
         #if !UI_TEST_HARNESS
         Task { await refreshNotificationAuthorization() }
         #endif
@@ -127,6 +140,10 @@ final class AppModel: ObservableObject {
         connectionStartedAt = nil
         connectionFailureNotified = false
         Task { await stream.disconnect() }
+        marketStreamTask?.cancel()
+        Task { await marketStream.disconnect() }
+        marketScanner.resetAll()
+        marketStatusMessage = "全市场扫描已停止"
         monitorState = .disconnected
         statusMessage = "监控已停止"
         #if os(iOS)
@@ -136,7 +153,7 @@ final class AppModel: ObservableObject {
 
     func addRule(symbol: String, windowMinutes: Int, threshold: String) throws {
         let candidate = try AlertRule(symbol: symbol, windowMinutes: windowMinutes, thresholdText: threshold)
-        guard rules.count < 50 else { throw PriceCoreError.invalidThreshold }
+        guard rules.count + marketRules.count < 50 else { throw PriceCoreError.invalidThreshold }
         guard !rules.contains(where: {
             $0.kind == .percentage && $0.symbol == candidate.symbol
                 && $0.windowMinutes == candidate.windowMinutes && $0.threshold == candidate.threshold
@@ -151,7 +168,7 @@ final class AppModel: ObservableObject {
 
     func addTargetRule(symbol: String, direction: TargetDirection, targetPrice: String) throws {
         var candidate = try AlertRule(symbol: symbol, targetDirection: direction, targetPriceText: targetPrice)
-        guard rules.count < 50 else { throw PriceCoreError.invalidThreshold }
+        guard rules.count + marketRules.count < 50 else { throw PriceCoreError.invalidThreshold }
         guard !rules.contains(where: {
             $0.kind == .target && $0.symbol == candidate.symbol
                 && $0.targetDirection == direction && $0.targetPrice == candidate.targetPrice
@@ -165,6 +182,44 @@ final class AppModel: ObservableObject {
         recordRecentSymbol(candidate.symbol)
         LocalPersistence.saveRules(rules)
         rulesDidChange()
+    }
+
+    func addMarketRule(windowMinutes: Int, threshold: String) throws {
+        let candidate = try MarketAlertRule(windowMinutes: windowMinutes, thresholdText: threshold)
+        guard rules.count + marketRules.count < 50 else { throw PriceCoreError.invalidThreshold }
+        guard !marketRules.contains(where: {
+            $0.windowMinutes == candidate.windowMinutes && $0.threshold == candidate.threshold
+        }) else { throw PriceCoreError.duplicateRule }
+        marketRules.append(candidate)
+        LocalPersistence.saveMarketRules(marketRules)
+        marketRulesDidChange()
+    }
+
+    func updateMarketRule(id: UUID, windowMinutes: Int, threshold: String) throws {
+        guard let index = marketRules.firstIndex(where: { $0.id == id }) else { return }
+        let candidate = try MarketAlertRule(
+            id: id, windowMinutes: windowMinutes, thresholdText: threshold,
+            isEnabled: marketRules[index].isEnabled
+        )
+        guard !marketRules.contains(where: {
+            $0.id != id && $0.windowMinutes == candidate.windowMinutes && $0.threshold == candidate.threshold
+        }) else { throw PriceCoreError.duplicateRule }
+        marketRules[index] = candidate
+        LocalPersistence.saveMarketRules(marketRules)
+        marketRulesDidChange()
+    }
+
+    func setMarketRuleEnabled(id: UUID, enabled: Bool) {
+        guard let index = marketRules.firstIndex(where: { $0.id == id }) else { return }
+        marketRules[index].isEnabled = enabled
+        LocalPersistence.saveMarketRules(marketRules)
+        marketRulesDidChange()
+    }
+
+    func deleteMarketRule(id: UUID) {
+        marketRules.removeAll { $0.id == id }
+        LocalPersistence.saveMarketRules(marketRules)
+        marketRulesDidChange()
     }
 
     func setRuleEnabled(id: UUID, enabled: Bool) {
@@ -255,7 +310,8 @@ final class AppModel: ObservableObject {
     func prepareIOSBackgroundDelivery() async {
         do {
             let state = try await iosBackgroundService.enterForeground(
-                rules: rules, monitoringEnabled: monitoringEnabled, primarySymbol: primarySymbol
+                rules: rules, marketRules: marketRules,
+                monitoringEnabled: monitoringEnabled, primarySymbol: primarySymbol
             )
             rules = state.rules
             LocalPersistence.saveRules(rules)
@@ -356,12 +412,14 @@ final class AppModel: ObservableObject {
             initializeRuleStatesFromCurrentPrices()
         }
         connect()
+        connectMarketIfNeeded()
     }
 
     func enterBackground() async {
         persistAllPrices()
         try? await iosBackgroundService.sync(
-            rules: rules, monitoringEnabled: monitoringEnabled, primarySymbol: primarySymbol
+            rules: rules, marketRules: marketRules,
+            monitoringEnabled: monitoringEnabled, primarySymbol: primarySymbol
         )
         foregroundLeaseTask?.cancel()
         foregroundLeaseTask = nil
@@ -374,6 +432,9 @@ final class AppModel: ObservableObject {
         pendingPrices.removeAll()
         resetPriceTrends()
         await stream.disconnect()
+        marketStreamTask?.cancel()
+        await marketStream.disconnect()
+        marketScanner.resetAll()
         monitorState = .disconnected
         statusMessage = "已进入后台；后台监控需要服务端"
     }
@@ -475,6 +536,46 @@ final class AppModel: ObservableObject {
         }
     }
 
+    private func connectMarketIfNeeded() {
+        marketStreamTask?.cancel()
+        marketScanner.resetAll()
+        guard monitoringEnabled, marketRules.contains(where: \.isEnabled) else {
+            Task { await marketStream.disconnect() }
+            marketStatusMessage = "全市场扫描未启用"
+            marketContractCount = 0
+            return
+        }
+        guard !validMarketSymbols.isEmpty else {
+            Task { await marketStream.disconnect() }
+            marketStatusMessage = "币安全市场合约目录不可用"
+            marketContractCount = 0
+            return
+        }
+        marketStreamTask = Task {
+            await marketStream.disconnect()
+            while !Task.isCancelled {
+                do {
+                    marketStatusMessage = "正在连接币安全市场行情"
+                    let updates = try await marketStream.connectAllMarket(symbols: Array(validMarketSymbols))
+                    for try await batch in updates {
+                        guard !Task.isCancelled else { return }
+                        let accepted = batch.filter { validMarketSymbols.contains($0.symbol) }
+                        lastMarketReceivedAt = Date()
+                        marketContractCount = validMarketSymbols.count
+                        marketStatusMessage = "全市场实时扫描中"
+                        for point in accepted { evaluateMarket(point) }
+                    }
+                } catch {
+                    guard !Task.isCancelled else { return }
+                    marketScanner.resetAll()
+                    marketContractCount = 0
+                    marketStatusMessage = "全市场扫描已中断：\(error.localizedDescription)"
+                    try? await Task.sleep(for: .seconds(5))
+                }
+            }
+        }
+    }
+
     private func enqueue(_ point: PricePoint) {
         pendingPrices[point.symbol] = point
         guard priceFlushTask == nil else { return }
@@ -567,6 +668,17 @@ final class AppModel: ObservableObject {
             triggers += RuleEngine.evaluate(rule: &rules[index], current: point, buffer: buffer)
         }
         LocalPersistence.saveRules(rules)
+        record(triggers)
+    }
+
+    private func evaluateMarket(_ point: PricePoint) {
+        let triggers = marketRules.filter(\.isEnabled).flatMap {
+            marketScanner.evaluate(rule: $0, current: point)
+        }
+        record(triggers)
+    }
+
+    private func record(_ triggers: [AlertTrigger]) {
         guard !triggers.isEmpty else { return }
         let records = triggers.map {
             TriggerRecord(
@@ -580,11 +692,19 @@ final class AppModel: ObservableObject {
         let cutoff = Int64(Date().addingTimeInterval(-30 * 24 * 60 * 60).timeIntervalSince1970 * 1000)
         history = Array((records + history).filter { $0.eventTime >= cutoff }.uniqued(by: \.id).prefix(500))
         LocalPersistence.saveHistory(history)
-        Task { await sendAlertNotification(symbol: point.symbol, triggers: triggers) }
+        Task { await sendAlertNotification(symbol: triggers[0].symbol, triggers: triggers) }
     }
 
     private func rulesDidChange() {
         syncSubscriptionsIfMonitoring()
+        #if os(iOS)
+        Task { await syncIOSBackgroundConfiguration() }
+        #endif
+    }
+
+    private func marketRulesDidChange() {
+        marketScanner.retainRules(Set(marketRules.filter(\.isEnabled).map(\.id)))
+        connectMarketIfNeeded()
         #if os(iOS)
         Task { await syncIOSBackgroundConfiguration() }
         #endif
@@ -605,7 +725,8 @@ final class AppModel: ObservableObject {
     private func syncIOSBackgroundConfiguration() async {
         do {
             try await iosBackgroundService.sync(
-                rules: rules, monitoringEnabled: monitoringEnabled, primarySymbol: primarySymbol
+                rules: rules, marketRules: marketRules,
+                monitoringEnabled: monitoringEnabled, primarySymbol: primarySymbol
             )
             backgroundStatusMessage = "服务端后台监控已同步"
         } catch {
@@ -663,7 +784,8 @@ final class AppModel: ObservableObject {
     private func sendAlertNotification(symbol: String, triggers: [AlertTrigger]) async {
         guard notificationsAllowed else { return }
         let content = UNMutableNotificationContent()
-        content.title = "\(symbol) 价格预警"
+        content.title = triggers.contains(where: { $0.kind == .marketPercentage })
+            ? "\(symbol) 全市场预警" : "\(symbol) 价格预警"
         content.body = triggers.map {
             if $0.kind == .target {
                 let direction = $0.direction == .rise ? "达到或高于" : "达到或低于"

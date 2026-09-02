@@ -9,13 +9,16 @@ internal sealed class MonitorService : IDisposable
     private readonly LocalStore store;
     private readonly ApiClient api;
     private readonly PriceBuffer buffer = new();
+    private readonly MarketScanner marketScanner = new();
     private readonly ConcurrentDictionary<string, PricePoint> pendingPrices = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, PricePoint> latestPrices = new(StringComparer.OrdinalIgnoreCase);
     private readonly object gate = new();
     private CancellationTokenSource? serviceCancellation;
     private CancellationTokenSource? connectionCancellation;
+    private CancellationTokenSource? marketCancellation;
     private Task? monitorTask;
     private Task? processorTask;
+    private Task? marketTask;
     private HashSet<string> staleSymbols = new(StringComparer.OrdinalIgnoreCase);
     private ConnectionSource source = ConnectionSource.Direct;
     private string message = "监控未启动";
@@ -25,6 +28,9 @@ internal sealed class MonitorService : IDisposable
     private int reconnectCount;
     private string? lastError;
     private int subscribedCount;
+    private string marketMessage = "全市场扫描未启用";
+    private int marketContractCount;
+    private DateTimeOffset? lastMarketReceivedAt;
 
     public event Action<MonitorSnapshot>? StateChanged;
     public event Action<IReadOnlyList<AlertTrigger>>? Triggered;
@@ -53,12 +59,16 @@ internal sealed class MonitorService : IDisposable
         SetStatus(false, true, "正在直连币安");
         monitorTask = Task.Run(() => MonitorLoopAsync(serviceCancellation.Token));
         processorTask = Task.Run(() => ProcessPricesAsync(serviceCancellation.Token));
+        marketTask = Task.Run(() => MarketLoopAsync(serviceCancellation.Token));
     }
 
     public void Stop()
     {
         serviceCancellation?.Cancel();
         connectionCancellation?.Cancel();
+        marketCancellation?.Cancel();
+        marketScanner.ResetAll();
+        lock (gate) { marketMessage = "全市场扫描已停止"; marketContractCount = 0; }
         serviceCancellation?.Dispose();
         serviceCancellation = null;
         connectionCancellation = null;
@@ -66,7 +76,11 @@ internal sealed class MonitorService : IDisposable
         SetStatus(false, false, "监控已停止");
     }
 
-    public void SubscriptionsChanged() => connectionCancellation?.Cancel();
+    public void SubscriptionsChanged()
+    {
+        connectionCancellation?.Cancel();
+        marketCancellation?.Cancel();
+    }
 
     public void InitializeRule(AlertRule rule)
     {
@@ -81,7 +95,69 @@ internal sealed class MonitorService : IDisposable
             return new MonitorSnapshot(Running, connected, warmingUp, source, message,
                 new Dictionary<string, PricePoint>(latestPrices, StringComparer.OrdinalIgnoreCase),
                 new HashSet<string>(staleSymbols, StringComparer.OrdinalIgnoreCase),
-                lastReceivedAt, reconnectCount, lastError, subscribedCount);
+                lastReceivedAt, reconnectCount, lastError, subscribedCount,
+                marketMessage, marketContractCount, lastMarketReceivedAt);
+        }
+    }
+
+    private async Task MarketLoopAsync(CancellationToken cancellationToken)
+    {
+        while (!cancellationToken.IsCancellationRequested)
+        {
+            MarketAlertRule[] rules;
+            lock (store.State) rules = store.State.MarketRules.Where(rule => rule.Enabled).ToArray();
+            marketScanner.RetainRules(rules.Select(rule => rule.Id).ToHashSet());
+            if (rules.Length == 0)
+            {
+                lock (gate) { marketMessage = "全市场扫描未启用"; marketContractCount = 0; }
+                PublishState();
+                try { await Task.Delay(TimeSpan.FromSeconds(1), cancellationToken); } catch (OperationCanceledException) { return; }
+                continue;
+            }
+            marketCancellation?.Dispose();
+            marketCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            try
+            {
+                var contracts = await api.BinanceUSDTContractsAsync(marketCancellation.Token);
+                var validSymbols = contracts.Select(item => item.Symbol).ToHashSet(StringComparer.OrdinalIgnoreCase);
+                using var socket = api.CreateDirectSocket();
+                lock (gate) { marketMessage = "正在连接币安全市场行情"; marketContractCount = 0; }
+                PublishState();
+                await socket.ConnectAsync(api.AllMarketUri(), marketCancellation.Token);
+                lock (gate) { marketMessage = "全市场实时扫描中"; marketContractCount = validSymbols.Count; }
+                PublishState();
+                await ReceiveMessagesAsync(socket, json =>
+                {
+                    MarketAlertRule[] currentRules;
+                    lock (store.State) currentRules = store.State.MarketRules.Where(rule => rule.Enabled).ToArray();
+                    var triggers = ApiClient.DecodeMarketPrices(json)
+                        .Where(point => validSymbols.Contains(point.Symbol))
+                        .SelectMany(point => currentRules.SelectMany(rule => marketScanner.Evaluate(rule, point)))
+                        .ToArray();
+                    lock (gate) { lastMarketReceivedAt = DateTimeOffset.UtcNow; marketMessage = "全市场实时扫描中"; }
+                    if (triggers.Length == 0) return;
+                    lock (store.State)
+                    {
+                        foreach (var trigger in triggers)
+                            store.State.History.Insert(0, new TriggerHistory(
+                                $"{trigger.RuleId}:{trigger.Direction}:{trigger.EventTime}", trigger.Symbol,
+                                trigger.Kind, trigger.Direction, trigger.ChangePercent, trigger.WindowMinutes,
+                                trigger.ThresholdText, null, trigger.PriceText, trigger.EventTime));
+                        store.Save();
+                    }
+                    foreach (var group in triggers.GroupBy(item => (item.Symbol, item.EventTime)))
+                        Triggered?.Invoke(group.ToArray());
+                }, marketCancellation.Token);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { return; }
+            catch (OperationCanceledException) { marketScanner.ResetAll(); }
+            catch (Exception error)
+            {
+                marketScanner.ResetAll();
+                lock (gate) { marketMessage = $"全市场扫描已中断：{ShortError(error)}"; marketContractCount = 0; }
+                PublishState();
+                try { await Task.Delay(TimeSpan.FromSeconds(5), cancellationToken); } catch (OperationCanceledException) { return; }
+            }
         }
     }
 
@@ -329,5 +405,6 @@ internal sealed class MonitorService : IDisposable
         Stop();
         serviceCancellation?.Dispose();
         connectionCancellation?.Dispose();
+        marketCancellation?.Dispose();
     }
 }

@@ -66,6 +66,7 @@ func main() {
 	}
 	go iosWorker.Run(ctx)
 	go binance.RunPriceStream(ctx, configuration.BinanceWSURL, dataStore, catalog, priceFanout{hub: hub, iosWorker: iosWorker}, logger)
+	go binance.RunMarketStream(ctx, configuration.BinanceWSURL, catalog, marketFanout{iosWorker}, iosWorker.MarketEnabled, logger)
 
 	server := &http.Server{
 		Addr:              configuration.ListenAddr,
@@ -86,6 +87,10 @@ func main() {
 	defer cancel()
 	_ = server.Shutdown(shutdownCtx)
 }
+
+type marketFanout struct{ worker *iosmonitor.Worker }
+
+func (p marketFanout) Publish(point domain.PricePoint) { p.worker.PublishMarket(point) }
 
 type priceFanout struct {
 	hub       *stream.Hub

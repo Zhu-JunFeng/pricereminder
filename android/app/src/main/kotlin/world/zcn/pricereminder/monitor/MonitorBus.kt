@@ -19,6 +19,9 @@ data class MonitorSnapshot(
     val lastError: String? = null,
     val subscribedCount: Int = 0,
     val notificationsEnabled: Boolean = false,
+    val marketMessage: String = "全市场扫描未启用",
+    val marketContractCount: Int = 0,
+    val lastMarketReceivedAt: Long? = null,
 )
 
 object MonitorBus {

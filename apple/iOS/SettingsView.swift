@@ -21,6 +21,9 @@ struct SettingsView: View {
                 LabeledContent("重连次数", value: "\(model.reconnectCount)")
                 LabeledContent("通知权限", value: model.notificationStatusLabel)
                 LabeledContent("后台提醒", value: model.backgroundStatusMessage)
+                LabeledContent("全市场扫描", value: model.marketStatusMessage)
+                LabeledContent("全市场覆盖", value: "\(model.marketContractCount) 个合约")
+                LabeledContent("全市场最后接收", value: marketLastReceivedText)
                 if let error = model.lastConnectionError {
                     LabeledContent("最近错误", value: error)
                 }
@@ -49,6 +52,11 @@ struct SettingsView: View {
 
     private var lastReceivedText: String {
         guard let date = model.lastPriceReceivedAt else { return "尚未收到" }
+        return date.formatted(date: .omitted, time: .standard)
+    }
+
+    private var marketLastReceivedText: String {
+        guard let date = model.lastMarketReceivedAt else { return "尚未收到" }
         return date.formatted(date: .omitted, time: .standard)
     }
 }

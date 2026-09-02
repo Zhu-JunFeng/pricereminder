@@ -9,6 +9,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import world.zcn.pricereminder.data.ContractDto
 import world.zcn.pricereminder.data.StoredRule
+import world.zcn.pricereminder.data.StoredMarketRule
 import world.zcn.pricereminder.data.TriggerHistory
 import world.zcn.pricereminder.monitor.MonitorBus
 import world.zcn.pricereminder.monitor.NotificationCoordinator
@@ -17,6 +18,7 @@ import java.util.UUID
 data class AppUiState(
     val contracts: List<ContractDto> = emptyList(),
     val rules: List<StoredRule> = emptyList(),
+    val marketRules: List<StoredMarketRule> = emptyList(),
     val history: List<TriggerHistory> = emptyList(),
     val primarySymbol: String = "BTCUSDT",
     val recentSymbols: List<String> = listOf("BTCUSDT"),
@@ -29,7 +31,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val container = (application as PriceReminderApplication).container
     private val mutableState = MutableStateFlow(
         AppUiState(
-            rules = container.localStore.rules(), history = container.localStore.history(),
+            rules = container.localStore.rules(), marketRules = container.localStore.marketRules(),
+            history = container.localStore.history(),
             primarySymbol = container.localStore.primarySymbol,
             recentSymbols = container.localStore.recentSymbols,
         )
@@ -60,7 +63,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val value = normalized.toBigDecimalOrNull() ?: return "请输入有效百分比"
         if (value < "0.1".toBigDecimal() || value > "100".toBigDecimal()) return "变化阈值必须在 0.1% 到 100% 之间"
         val current = mutableState.value.rules
-        if (current.size >= 50) return "每台设备最多 50 条规则"
+        if (current.size + mutableState.value.marketRules.size >= 50) return "每台设备最多 50 条规则"
         if (current.any { it.kind == "percentage" && it.symbol == symbol && it.windowMinutes == window && it.thresholdText.toBigDecimalOrNull() == value }) {
             return "相同合约、窗口和阈值的规则已存在"
         }
@@ -75,7 +78,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val value = normalized.toBigDecimalOrNull() ?: return "请输入有效目标价格"
         if (value <= java.math.BigDecimal.ZERO) return "目标价格必须大于 0"
         val current = mutableState.value.rules
-        if (current.size >= 50) return "每台设备最多 50 条规则"
+        if (current.size + mutableState.value.marketRules.size >= 50) return "每台设备最多 50 条规则"
         if (current.any {
                 it.kind == "target" && it.symbol == symbol && it.targetDirection == direction &&
                     it.targetPriceText?.toBigDecimalOrNull() == value
@@ -88,6 +91,43 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         recordRecentSymbol(symbol)
         saveRules(updated)
         return null
+    }
+
+    fun addMarketRule(window: Int, threshold: String): String? {
+        val normalized = threshold.trim()
+        if (window !in 1..60) return "时间窗口必须在 1 到 60 分钟之间"
+        val value = normalized.toBigDecimalOrNull() ?: return "请输入有效百分比"
+        if (value < "0.1".toBigDecimal() || value > "100".toBigDecimal()) return "变化阈值必须在 0.1% 到 100% 之间"
+        val current = mutableState.value.marketRules
+        if (mutableState.value.rules.size + current.size >= 50) return "每台设备最多 50 条规则"
+        if (current.any { it.windowMinutes == window && it.thresholdText.toBigDecimalOrNull() == value }) {
+            return "相同窗口和阈值的全市场规则已存在"
+        }
+        saveMarketRules(current + StoredMarketRule(UUID.randomUUID().toString(), window, normalized))
+        return null
+    }
+
+    fun updateMarketRule(id: String, window: Int, threshold: String): String? {
+        val normalized = threshold.trim()
+        if (window !in 1..60) return "时间窗口必须在 1 到 60 分钟之间"
+        val value = normalized.toBigDecimalOrNull() ?: return "请输入有效百分比"
+        if (value < "0.1".toBigDecimal() || value > "100".toBigDecimal()) return "变化阈值必须在 0.1% 到 100% 之间"
+        val current = mutableState.value.marketRules
+        if (current.any { it.id != id && it.windowMinutes == window && it.thresholdText.toBigDecimalOrNull() == value }) {
+            return "相同窗口和阈值的全市场规则已存在"
+        }
+        saveMarketRules(current.map {
+            if (it.id == id) StoredMarketRule(id, window, normalized, it.enabled) else it
+        })
+        return null
+    }
+
+    fun toggleMarketRule(id: String, enabled: Boolean) {
+        saveMarketRules(mutableState.value.marketRules.map { if (it.id == id) it.copy(enabled = enabled) else it })
+    }
+
+    fun deleteMarketRule(id: String) {
+        saveMarketRules(mutableState.value.marketRules.filterNot { it.id == id })
     }
 
     fun updateRule(
@@ -160,6 +200,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private fun saveRules(rules: List<StoredRule>) {
         container.localStore.saveRules(rules)
         mutableState.value = mutableState.value.copy(rules = rules)
+        syncSubscriptions()
+    }
+
+    private fun saveMarketRules(rules: List<StoredMarketRule>) {
+        container.localStore.saveMarketRules(rules)
+        mutableState.value = mutableState.value.copy(marketRules = rules)
         syncSubscriptions()
     }
 

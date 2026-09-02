@@ -16,12 +16,15 @@ import okhttp3.WebSocketListener
 import world.zcn.pricereminder.PriceReminderApplication
 import world.zcn.pricereminder.core.AlertRule
 import world.zcn.pricereminder.core.AlertRuleKind
+import world.zcn.pricereminder.core.MarketAlertRule
+import world.zcn.pricereminder.core.MarketScanner
 import world.zcn.pricereminder.core.PriceBuffer
 import world.zcn.pricereminder.core.PricePoint
 import world.zcn.pricereminder.core.RuleEngine
 import world.zcn.pricereminder.core.TargetDirection
 import world.zcn.pricereminder.data.CombinedTradeDto
 import world.zcn.pricereminder.data.RelayMessage
+import world.zcn.pricereminder.data.MarketMiniTickerDto
 import world.zcn.pricereminder.data.TriggerHistory
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.time.Duration.Companion.seconds
@@ -32,9 +35,13 @@ class PriceMonitorService : Service() {
     private val buffer = PriceBuffer()
     private val latestEventTimes = ConcurrentHashMap<String, Long>()
     private val activeRules = ConcurrentHashMap<String, AlertRule>()
+    private val marketScanner = MarketScanner()
     private val pendingPrices = ConcurrentHashMap<String, PricePoint>()
     private var subscribedSymbols = emptySet<String>()
     private var socket: WebSocket? = null
+    private var marketSocket: WebSocket? = null
+    private var marketRulesSignature = ""
+    private var validMarketSymbols = emptySet<String>()
     private var reconnectJob: Job? = null
     private var ready = false
     private var lastMessageAt = 0L
@@ -63,6 +70,7 @@ class PriceMonitorService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         connectionSource = ConnectionSource.DIRECT
         connect()
+        connectMarketIfNeeded()
         return START_NOT_STICKY
     }
 
@@ -70,9 +78,100 @@ class PriceMonitorService : Service() {
         persistAllPrices()
         reconnectJob?.cancel()
         socket?.close(1000, "service stopped")
+        val closingMarketSocket = marketSocket
+        marketSocket = null
+        closingMarketSocket?.close(1000, "service stopped")
         scope.cancel()
-        MonitorBus.update { it.copy(running = false, connected = false, message = "监控已停止") }
+        MonitorBus.update {
+            it.copy(
+                running = false, connected = false, message = "监控已停止",
+                marketMessage = "全市场扫描已停止", marketContractCount = 0,
+            )
+        }
         super.onDestroy()
+    }
+
+    private fun connectMarketIfNeeded() {
+        val stored = container.localStore.marketRules().filter { it.enabled }
+        val signature = stored.sortedBy { it.id }.joinToString("|") { "${it.id}:${it.windowMinutes}:${it.thresholdText}" }
+        if (signature == marketRulesSignature && (signature.isEmpty() || marketSocket != null)) return
+        marketRulesSignature = signature
+        val replacedSocket = marketSocket
+        marketSocket = null
+        replacedSocket?.cancel()
+        marketScanner.resetAll()
+        if (stored.isEmpty()) {
+            MonitorBus.update { it.copy(marketMessage = "全市场扫描未启用", marketContractCount = 0) }
+            return
+        }
+        MonitorBus.update { it.copy(marketMessage = "正在连接币安全市场行情", marketContractCount = 0) }
+        scope.launch {
+            runCatching {
+                validMarketSymbols = container.apiClient.binanceContracts().mapTo(mutableSetOf()) { it.symbol }
+                marketSocket = container.apiClient.http.newWebSocket(container.apiClient.allMarketRequest(), marketListener())
+            }.onFailure { scheduleMarketReconnect(it.message ?: "全市场连接失败") }
+        }
+    }
+
+    private fun marketListener() = object : WebSocketListener() {
+        override fun onOpen(webSocket: WebSocket, response: Response) {
+            if (webSocket === marketSocket) MonitorBus.update { it.copy(marketMessage = "全市场实时扫描中") }
+        }
+
+        override fun onMessage(webSocket: WebSocket, text: String) {
+            if (webSocket !== marketSocket) return
+            val batch = runCatching {
+                container.apiClient.json.decodeFromString<List<MarketMiniTickerDto>>(text)
+            }.getOrNull() ?: return
+            val rules = container.localStore.marketRules().filter { it.enabled }.mapNotNull {
+                runCatching { MarketAlertRule(it.id, it.windowMinutes, it.thresholdText, it.enabled) }.getOrNull()
+            }
+            marketScanner.retainRules(rules.mapTo(mutableSetOf()) { it.id })
+            val triggers = batch.asSequence()
+                .filter { it.eventType == "24hrMiniTicker" && it.symbol in validMarketSymbols && it.closePrice != "0" }
+                .mapNotNull { runCatching { PricePoint(it.symbol, it.closePrice, it.eventTime) }.getOrNull() }
+                .flatMap { point -> rules.asSequence().flatMap { marketScanner.evaluate(it, point).asSequence() } }
+                .toList()
+            val now = System.currentTimeMillis()
+            MonitorBus.update {
+                it.copy(
+                    marketMessage = "全市场实时扫描中", marketContractCount = validMarketSymbols.size,
+                    lastMarketReceivedAt = now,
+                )
+            }
+            triggers.groupBy { it.symbol to it.eventTime }
+                .forEach { (key, items) -> notifications.alerts(key.first, items) }
+            if (triggers.isNotEmpty()) {
+                container.localStore.appendHistory(triggers.map {
+                    TriggerHistory(
+                        id = "${it.ruleId}:${it.direction}:${it.eventTime}", symbol = it.symbol,
+                        direction = it.direction.name.lowercase(), kind = "market_percentage",
+                        changePercent = it.changePercent?.toPlainString(), windowMinutes = it.windowMinutes,
+                        thresholdText = it.thresholdText, targetPriceText = null,
+                        priceText = it.priceText, eventTime = it.eventTime,
+                    )
+                })
+            }
+        }
+
+        override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+            if (webSocket === marketSocket) scheduleMarketReconnect(t.message ?: "全市场连接中断")
+        }
+
+        override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+            if (webSocket === marketSocket) scheduleMarketReconnect(reason.ifBlank { "全市场连接关闭" })
+        }
+    }
+
+    private fun scheduleMarketReconnect(reason: String) {
+        marketSocket = null
+        marketScanner.resetAll()
+        MonitorBus.update { it.copy(marketMessage = "全市场扫描已中断：$reason", marketContractCount = 0) }
+        scope.launch {
+            delay(5.seconds)
+            marketRulesSignature = ""
+            connectMarketIfNeeded()
+        }
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -328,6 +427,7 @@ class PriceMonitorService : Service() {
         while (true) {
             delay(1.seconds)
             refreshRules()
+            connectMarketIfNeeded()
             val desiredSymbols = (activeRules.values.filter { it.enabled }.map { it.symbol } + container.localStore.primarySymbol)
                 .distinct().take(50).toSet()
             if (desiredSymbols != subscribedSymbols) {

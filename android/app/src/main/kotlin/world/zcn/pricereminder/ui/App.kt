@@ -60,6 +60,7 @@ import world.zcn.pricereminder.AppUiState
 import world.zcn.pricereminder.MainViewModel
 import world.zcn.pricereminder.data.ContractDto
 import world.zcn.pricereminder.data.StoredRule
+import world.zcn.pricereminder.data.StoredMarketRule
 import world.zcn.pricereminder.core.ContractOrdering
 import world.zcn.pricereminder.monitor.MonitorBus
 import java.math.RoundingMode
@@ -154,20 +155,23 @@ private fun MarketScreen(
 private fun RulesScreen(state: AppUiState, viewModel: MainViewModel) {
     var adding by remember { mutableStateOf(false) }
     var editingRule by remember { mutableStateOf<StoredRule?>(null) }
+    var editingMarketRule by remember { mutableStateOf<StoredMarketRule?>(null) }
     LazyColumn(Modifier.fillMaxSize(), contentPadding = androidx.compose.foundation.layout.PaddingValues(20.dp)) {
         item {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 Column {
                     Text("价格预警", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.SemiBold)
-                    Text("涨跌幅与目标价格 · ${state.rules.size}/50", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("单合约、全市场与目标价格 · ${state.rules.size + state.marketRules.size}/50", color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 Button(onClick = {
                     if (adding) {
                         adding = false
                         editingRule = null
+                        editingMarketRule = null
                     } else {
                         adding = true
                         editingRule = null
+                        editingMarketRule = null
                     }
                 }, shape = RoundedCornerShape(8.dp)) {
                     Icon(Icons.Outlined.AddAlert, contentDescription = null)
@@ -180,16 +184,19 @@ private fun RulesScreen(state: AppUiState, viewModel: MainViewModel) {
                 recentSymbols = state.recentSymbols,
                 initialSymbol = state.primarySymbol,
                 initialRule = editingRule,
+                initialMarketRule = editingMarketRule,
                 onSavePercentage = viewModel::addRule,
+                onSaveMarket = viewModel::addMarketRule,
                 onSaveTarget = viewModel::addTargetRule,
                 onUpdate = viewModel::updateRule,
+                onUpdateMarket = viewModel::updateMarketRule,
                 onSelectSymbol = viewModel::recordRecentSymbol,
-                onSaved = { adding = false; editingRule = null },
+                onSaved = { adding = false; editingRule = null; editingMarketRule = null },
             )
             Spacer(Modifier.height(18.dp))
         }
-        if (state.rules.isEmpty()) {
-            item { EmptyMessage("还没有预警规则", "可添加涨跌幅提醒或目标价格提醒。") }
+        if (state.rules.isEmpty() && state.marketRules.isEmpty()) {
+            item { EmptyMessage("还没有预警规则", "可添加单合约、全市场或目标价格提醒。") }
         }
         items(state.rules, key = { it.id }) { rule ->
             Row(Modifier.fillMaxWidth().padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -203,10 +210,29 @@ private fun RulesScreen(state: AppUiState, viewModel: MainViewModel) {
                     )
                 }
                 Switch(checked = rule.enabled, onCheckedChange = { viewModel.toggleRule(rule.id, it) })
-                IconButton(onClick = { editingRule = rule; adding = true }) {
+                IconButton(onClick = { editingRule = rule; editingMarketRule = null; adding = true }) {
                     Icon(Icons.Outlined.Edit, contentDescription = "编辑规则")
                 }
                 IconButton(onClick = { viewModel.deleteRule(rule.id) }) { Icon(Icons.Outlined.Delete, contentDescription = "删除规则") }
+            }
+            HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.45f))
+        }
+        items(state.marketRules, key = { "market:${it.id}" }) { rule ->
+            Row(Modifier.fillMaxWidth().padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("全部 USDT 永续", fontWeight = FontWeight.SemiBold)
+                    Text(
+                        "${rule.windowMinutes} 分钟内上涨或下跌 ≥ ${rule.thresholdText}%",
+                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Switch(checked = rule.enabled, onCheckedChange = { viewModel.toggleMarketRule(rule.id, it) })
+                IconButton(onClick = { editingMarketRule = rule; editingRule = null; adding = true }) {
+                    Icon(Icons.Outlined.Edit, contentDescription = "编辑全市场规则")
+                }
+                IconButton(onClick = { viewModel.deleteMarketRule(rule.id) }) {
+                    Icon(Icons.Outlined.Delete, contentDescription = "删除全市场规则")
+                }
             }
             HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.45f))
         }
@@ -242,30 +268,45 @@ private fun AddRuleForm(
     recentSymbols: List<String>,
     initialSymbol: String,
     initialRule: StoredRule?,
+    initialMarketRule: StoredMarketRule?,
     onSavePercentage: (String, Int, String) -> String?,
+    onSaveMarket: (Int, String) -> String?,
     onSaveTarget: (String, String, String) -> String?,
     onUpdate: (String, String, String, Int, String, String, String) -> String?,
+    onUpdateMarket: (String, Int, String) -> String?,
     onSelectSymbol: (String) -> Unit,
     onSaved: () -> Unit,
 ) {
-    var symbol by remember(initialRule?.id) { mutableStateOf(initialRule?.symbol ?: initialSymbol) }
-    var kind by remember(initialRule?.id) { mutableStateOf(initialRule?.kind ?: "percentage") }
-    var window by remember(initialRule?.id) { mutableStateOf((initialRule?.windowMinutes?.takeIf { it > 0 } ?: 5).toString()) }
-    var threshold by remember(initialRule?.id) { mutableStateOf(initialRule?.thresholdText ?: "3") }
-    var targetDirection by remember(initialRule?.id) { mutableStateOf(initialRule?.targetDirection ?: "above") }
-    var targetPrice by remember(initialRule?.id) { mutableStateOf(initialRule?.targetPriceText ?: "") }
-    var error by remember(initialRule?.id) { mutableStateOf<String?>(null) }
+    val editorKey = initialRule?.id ?: initialMarketRule?.id
+    var symbol by remember(editorKey) { mutableStateOf(initialRule?.symbol ?: initialSymbol) }
+    var kind by remember(editorKey) { mutableStateOf(if (initialMarketRule != null) "market_percentage" else initialRule?.kind ?: "percentage") }
+    var window by remember(editorKey) { mutableStateOf((initialMarketRule?.windowMinutes ?: initialRule?.windowMinutes?.takeIf { it > 0 } ?: 5).toString()) }
+    var threshold by remember(editorKey) { mutableStateOf(initialMarketRule?.thresholdText ?: initialRule?.thresholdText ?: "3") }
+    var targetDirection by remember(editorKey) { mutableStateOf(initialRule?.targetDirection ?: "above") }
+    var targetPrice by remember(editorKey) { mutableStateOf(initialRule?.targetPriceText ?: "") }
+    var error by remember(editorKey) { mutableStateOf<String?>(null) }
     Column(Modifier.fillMaxWidth().padding(top = 18.dp, bottom = 6.dp)) {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            TextButton(onClick = { kind = "percentage" }) { Text(if (kind == "percentage") "✓ 涨跌幅" else "涨跌幅") }
-            TextButton(onClick = { kind = "target" }) { Text(if (kind == "target") "✓ 目标价格" else "目标价格") }
+            if (initialMarketRule != null) {
+                TextButton(onClick = {}) { Text("✓ 全市场") }
+            } else {
+                TextButton(onClick = { kind = "percentage" }) { Text(if (kind == "percentage") "✓ 涨跌幅" else "涨跌幅") }
+                if (initialRule == null) {
+                    TextButton(onClick = { kind = "market_percentage" }) { Text(if (kind == "market_percentage") "✓ 全市场" else "全市场") }
+                }
+                TextButton(onClick = { kind = "target" }) { Text(if (kind == "target") "✓ 目标价格" else "目标价格") }
+            }
         }
-        ContractPicker(contracts, recentSymbols, symbol, "U本位永续合约") {
-            symbol = it
-            onSelectSymbol(it)
+        if (kind == "market_percentage") {
+            Text("范围：币安全部 USDT 永续", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        } else {
+            ContractPicker(contracts, recentSymbols, symbol, "U本位永续合约") {
+                symbol = it
+                onSelectSymbol(it)
+            }
         }
         Spacer(Modifier.height(10.dp))
-        if (kind == "percentage") {
+        if (kind != "target") {
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 OutlinedTextField(window, { window = it.filter(Char::isDigit) }, label = { Text("分钟") }, modifier = Modifier.weight(1f), singleLine = true, shape = RoundedCornerShape(8.dp))
                 OutlinedTextField(threshold, { threshold = it.filter { char -> char.isDigit() || char == '.' } }, label = { Text("变化 %") }, modifier = Modifier.weight(1f), singleLine = true, shape = RoundedCornerShape(8.dp))
@@ -284,14 +325,18 @@ private fun AddRuleForm(
         error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 6.dp)) }
         Button(
             onClick = {
-                error = if (initialRule != null) {
+                error = if (initialMarketRule != null) {
+                    onUpdateMarket(initialMarketRule.id, window.toIntOrNull() ?: 0, threshold)
+                } else if (initialRule != null) {
                     onUpdate(initialRule.id, symbol, kind, window.toIntOrNull() ?: 0, threshold, targetDirection, targetPrice)
+                } else if (kind == "market_percentage") {
+                    onSaveMarket(window.toIntOrNull() ?: 0, threshold)
                 } else if (kind == "percentage") onSavePercentage(symbol, window.toIntOrNull() ?: 0, threshold)
                 else onSaveTarget(symbol, targetDirection, targetPrice)
                 if (error == null) onSaved()
             },
             modifier = Modifier.fillMaxWidth().padding(top = 12.dp), shape = RoundedCornerShape(8.dp),
-        ) { Text(if (initialRule == null) "保存预警" else "保存修改") }
+        ) { Text(if (initialRule == null && initialMarketRule == null) "保存预警" else "保存修改") }
     }
 }
 
@@ -352,6 +397,11 @@ private fun SettingsScreen(
         SettingRow("最后接收", monitor.lastReceivedAt?.let { DateFormat.getTimeInstance(DateFormat.MEDIUM).format(Date(it)) } ?: "尚未收到")
         SettingRow("重连次数", monitor.reconnectCount.toString())
         SettingRow("通知权限", if (monitor.notificationsEnabled) "已允许" else "未允许")
+        SettingRow("全市场扫描", monitor.marketMessage)
+        SettingRow("全市场覆盖", "${monitor.marketContractCount} 个合约")
+        SettingRow("全市场最后接收", monitor.lastMarketReceivedAt?.let {
+            DateFormat.getTimeInstance(DateFormat.MEDIUM).format(Date(it))
+        } ?: "尚未收到")
         monitor.lastError?.let { SettingRow("最近错误", it) }
         Spacer(Modifier.height(18.dp))
         Text("连接自检", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)

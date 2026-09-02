@@ -12,6 +12,7 @@ internal sealed class ApiClient
     public const string ServerBaseUrl = "https://keyflow.zcn.world/price-reminder";
     private const string BinanceRestUrl = "https://fapi.binance.com/fapi/v1/exchangeInfo";
     private const string BinanceStreamUrl = "wss://fstream.binance.com/stream";
+    private const string BinanceAllMarketUrl = "wss://fstream.binance.com/ws/!miniTicker@arr";
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = true };
     private readonly HttpClient http = new() { Timeout = TimeSpan.FromSeconds(15) };
     private readonly LocalStore store;
@@ -31,6 +32,11 @@ internal sealed class ApiClient
             return await ServerContractsAsync(cancellationToken);
         }
     }
+
+    public async Task<IReadOnlyList<Contract>> BinanceUSDTContractsAsync(CancellationToken cancellationToken) =>
+        (await DirectContractsAsync(cancellationToken)).Where(item => item.QuoteAsset == "USDT").ToArray();
+
+    public Uri AllMarketUri() => new(BinanceAllMarketUrl);
 
     public ClientWebSocket CreateDirectSocket()
     {
@@ -86,6 +92,22 @@ internal sealed class ApiClient
 
     public static RelayEnvelope DecodeRelay(string json) =>
         JsonSerializer.Deserialize<RelayEnvelope>(json, JsonOptions) ?? new RelayEnvelope();
+
+    public static IReadOnlyList<PricePoint> DecodeMarketPrices(string json)
+    {
+        using var document = JsonDocument.Parse(json);
+        if (document.RootElement.ValueKind != JsonValueKind.Array) return [];
+        var result = new List<PricePoint>();
+        foreach (var item in document.RootElement.EnumerateArray())
+        {
+            if (!item.TryGetProperty("e", out var eventType) || eventType.GetString() != "24hrMiniTicker") continue;
+            var price = item.GetProperty("c").GetString();
+            var symbol = item.GetProperty("s").GetString();
+            if (string.IsNullOrWhiteSpace(symbol) || string.IsNullOrWhiteSpace(price) || price == "0") continue;
+            result.Add(new PricePoint(symbol, price, item.GetProperty("E").GetInt64()));
+        }
+        return result;
+    }
 
     private async Task<IReadOnlyList<Contract>> DirectContractsAsync(CancellationToken cancellationToken)
     {
