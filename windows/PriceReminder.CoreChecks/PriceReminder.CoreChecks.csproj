@@ -8,6 +8,7 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="../Models.cs" Link="Models.cs" />
+    <Compile Include="../MarketScanner.cs" Link="MarketScanner.cs" />
     <Compile Include="../RuleEngine.cs" Link="RuleEngine.cs" />
   </ItemGroup>
 </Project>
