@@ -64,15 +64,7 @@ struct MenuPanel: View {
             .padding(16)
             Divider()
             ForEach(model.menuSymbols.prefix(3), id: \.self) { symbol in
-                HStack {
-                    Text(symbol).font(.headline)
-                    Spacer()
-                    HStack(spacing: 5) {
-                        Text(model.prices[symbol]?.priceText ?? "--")
-                            .font(.title3.weight(.semibold)).numericPriceStyle()
-                        PriceTrendArrow(trend: model.consecutivePriceTrends[symbol], size: 9)
-                    }
-                }
+                MenuPriceRow(symbol: symbol)
                 .padding(.horizontal, 16).padding(.vertical, 12)
             }
             Divider()
@@ -92,6 +84,52 @@ struct MenuPanel: View {
             .padding(14)
         }
         .frame(width: 340)
+    }
+}
+
+private struct MenuPriceRow: View {
+    @EnvironmentObject private var model: AppModel
+    let symbol: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack {
+                Text(symbol).font(.headline)
+                Spacer()
+                HStack(spacing: 5) {
+                    Text(model.prices[symbol]?.priceText ?? "--")
+                        .font(.title3.weight(.semibold)).numericPriceStyle()
+                    PriceTrendArrow(trend: model.consecutivePriceTrends[symbol], size: 9)
+                }
+            }
+            if let setting = model.entryPrices[symbol] {
+                TimelineView(.periodic(from: .now, by: 1)) { context in
+                    HStack(spacing: 8) {
+                        Text("\(setting.positionSide.displayName) · 开仓 \(setting.priceText)")
+                        Spacer()
+                        if let change = model.entryPriceChange(for: symbol) {
+                            let stale = model.prices[symbol].map {
+                                model.isPriceStale($0, now: context.date)
+                            } ?? true
+                            Text(stale ? "\(change.percentageText) · 价格已陈旧" : change.percentageText)
+                                .foregroundStyle(stale ? Color.secondary : color(for: change.direction))
+                                .accessibilityLabel(stale ? "\(change.percentageText)，价格已陈旧" : change.percentageText)
+                        }
+                    }
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .numericPriceStyle()
+                }
+            }
+        }
+    }
+
+    private func color(for direction: EntryPriceDirection) -> Color {
+        switch direction {
+        case .rise: AppTheme.rise
+        case .fall: AppTheme.fall
+        case .flat: .secondary
+        }
     }
 }
 
@@ -136,12 +174,48 @@ struct MacSettingsView: View {
     @State private var showingRuleContracts = false
     @State private var editingRuleID: UUID?
     @State private var editingMarketRuleID: UUID?
+    @State private var entryPriceDrafts: [String: String] = [:]
+    @State private var entrySideDrafts: [String: PositionSide] = [:]
+    @State private var entryPriceError: String?
 
     var body: some View {
         TabView {
             VStack(alignment: .leading, spacing: 14) {
                 Text("菜单栏合约").font(.title2.weight(.semibold))
                 Text("最多选择三个合约，价格每秒更新。").foregroundStyle(.secondary)
+
+                if !model.menuSymbols.isEmpty {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("开仓参考价").font(.headline)
+                        ForEach(model.menuSymbols, id: \.self) { symbol in
+                            HStack(spacing: 8) {
+                                Text(symbol).font(.subheadline.weight(.medium)).frame(width: 120, alignment: .leading)
+                                Picker("", selection: entrySideBinding(for: symbol)) {
+                                    Text("多").tag(PositionSide.long)
+                                    Text("空").tag(PositionSide.short)
+                                }
+                                .labelsHidden()
+                                .pickerStyle(.segmented)
+                                .frame(width: 84)
+                                TextField("输入开仓价", text: entryPriceBinding(for: symbol))
+                                    .textFieldStyle(.roundedBorder)
+                                Button("保存") { saveEntryPrice(for: symbol) }
+                                Button("使用当前价") { useCurrentPrice(for: symbol) }
+                                    .disabled(!canUseCurrentPrice(for: symbol))
+                                if model.entryPrices[symbol] != nil {
+                                    Button { clearEntryPrice(for: symbol) } label: {
+                                        Image(systemName: "xmark.circle")
+                                    }
+                                    .buttonStyle(.borderless)
+                                    .help("清除开仓价")
+                                }
+                            }
+                        }
+                        if let entryPriceError {
+                            Text(entryPriceError).font(.caption).foregroundStyle(AppTheme.fall)
+                        }
+                    }
+                }
 
                 TextField("筛选合约代码，如 BTC", text: $contractQuery)
                     .textFieldStyle(.roundedBorder)
@@ -333,11 +407,74 @@ struct MacSettingsView: View {
         .onAppear {
             selection = Set(model.menuSymbols)
             ruleSymbol = model.primarySymbol
+            refreshEntryPriceDrafts()
         }
+        .onChange(of: model.menuSymbols) { _, _ in refreshEntryPriceDrafts() }
     }
 
     private var filteredContracts: [Contract] {
         model.orderedContracts(query: contractQuery)
+    }
+
+    private func entryPriceBinding(for symbol: String) -> Binding<String> {
+        Binding(
+            get: { entryPriceDrafts[symbol] ?? model.entryPrices[symbol]?.priceText ?? "" },
+            set: { entryPriceDrafts[symbol] = $0 }
+        )
+    }
+
+    private func entrySideBinding(for symbol: String) -> Binding<PositionSide> {
+        Binding(
+            get: { entrySideDrafts[symbol] ?? model.entryPrices[symbol]?.positionSide ?? .long },
+            set: { entrySideDrafts[symbol] = $0 }
+        )
+    }
+
+    private func refreshEntryPriceDrafts() {
+        for symbol in model.menuSymbols {
+            entryPriceDrafts[symbol] = model.entryPrices[symbol]?.priceText ?? ""
+            entrySideDrafts[symbol] = model.entryPrices[symbol]?.positionSide ?? .long
+        }
+    }
+
+    private func saveEntryPrice(for symbol: String) {
+        do {
+            try model.setEntryPrice(
+                symbol: symbol,
+                priceText: entryPriceDrafts[symbol] ?? "",
+                positionSide: entrySideDrafts[symbol] ?? .long
+            )
+            entryPriceDrafts[symbol] = model.entryPrices[symbol]?.priceText
+            entrySideDrafts[symbol] = model.entryPrices[symbol]?.positionSide ?? .long
+            entryPriceError = nil
+        } catch {
+            entryPriceError = "\(symbol)：\(error.localizedDescription)"
+        }
+    }
+
+    private func useCurrentPrice(for symbol: String) {
+        do {
+            try model.useCurrentPriceAsEntry(
+                symbol: symbol, positionSide: entrySideDrafts[symbol] ?? .long
+            )
+            entryPriceDrafts[symbol] = model.entryPrices[symbol]?.priceText
+            entrySideDrafts[symbol] = model.entryPrices[symbol]?.positionSide ?? .long
+            entryPriceError = nil
+        } catch {
+            entryPriceError = "\(symbol)：\(error.localizedDescription)"
+        }
+    }
+
+    private func clearEntryPrice(for symbol: String) {
+        model.clearEntryPrice(symbol: symbol)
+        entryPriceDrafts[symbol] = ""
+        entrySideDrafts[symbol] = .long
+        entryPriceError = nil
+    }
+
+    private func canUseCurrentPrice(for symbol: String) -> Bool {
+        guard let price = model.prices[symbol] else { return false }
+        return !model.isPriceStale(price)
     }
 
     private func saveRule() {

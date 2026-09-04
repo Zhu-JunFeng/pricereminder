@@ -155,6 +155,68 @@ func marketScannerUsesRollingExtremesAndIndependentResets() throws {
     )
 }
 
+func entryPricesValidateAndCalculateSignedChanges() throws {
+    let setting = try EntryPriceSetting(
+        symbol: "btcusdt", priceText: " 100.0000 ", positionSide: .long
+    )
+    try expect(
+        setting.symbol == "BTCUSDT" && setting.priceText == "100.0000" && setting.positionSide == .long,
+        "entry price must normalize input"
+    )
+    try expect(
+        EntryPriceCalculator.change(
+            currentPrice: 104.265, entryPrice: setting.price, positionSide: .long
+        ).percentageText == "+4.27%",
+        "entry gain must round to two decimals"
+    )
+    try expect(
+        EntryPriceCalculator.change(
+            currentPrice: 95.735, entryPrice: setting.price, positionSide: .long
+        ).percentageText == "-4.27%",
+        "entry loss must keep its sign"
+    )
+    try expect(
+        EntryPriceCalculator.change(
+            currentPrice: 100, entryPrice: setting.price, positionSide: .long
+        ).percentageText == "0.00%",
+        "equal prices must show a neutral percentage"
+    )
+    try expect(
+        EntryPriceCalculator.change(
+            currentPrice: 95.735, entryPrice: setting.price, positionSide: .short
+        ).percentageText == "+4.27%",
+        "short positions must gain when the current price falls"
+    )
+    try expect(
+        EntryPriceCalculator.change(
+            currentPrice: 104.265, entryPrice: setting.price, positionSide: .short
+        ).percentageText == "-4.27%",
+        "short positions must lose when the current price rises"
+    )
+    let tinyLoss = EntryPriceCalculator.change(
+        currentPrice: Decimal(string: "99.999999")!, entryPrice: 100, positionSide: .long
+    )
+    try expect(tinyLoss.percentageText == "0.00%" && tinyLoss.direction == .flat, "rounded negative zero must be normalized")
+
+    for invalid in ["", "abc", "0", "-1"] {
+        do {
+            _ = try EntryPriceSetting(symbol: "BTCUSDT", priceText: invalid)
+            throw CheckError.failed("invalid entry price \(invalid) must be rejected")
+        } catch PriceCoreError.invalidEntryPrice {
+            continue
+        }
+    }
+
+    let data = try JSONEncoder().encode([setting])
+    let restored = try JSONDecoder().decode([EntryPriceSetting].self, from: data)
+    try expect(restored == [setting], "entry prices must survive persistence round trips")
+    let legacy = Data(#"[{"symbol":"ETHUSDT","priceText":"2000"}]"#.utf8)
+    let legacySetting = try JSONDecoder().decode([EntryPriceSetting].self, from: legacy)[0]
+    try expect(legacySetting.positionSide == .long, "entry prices without a side must migrate to long")
+    try expect(!EntryPriceCalculator.isStale(eventTime: 1_000, nowMilliseconds: 31_000), "exactly 30 seconds must remain fresh")
+    try expect(EntryPriceCalculator.isStale(eventTime: 1_000, nowMilliseconds: 31_001), "prices older than 30 seconds must be stale")
+}
+
 do {
     try equalThresholdTriggersAndRearms()
     try directionsAreIndependent()
@@ -166,6 +228,7 @@ do {
     try recentContractsLeadMatchingResultsWithoutChangingTheRest()
     try consecutivePriceTrendRequiresTwoMatchingMovements()
     try marketScannerUsesRollingExtremesAndIndependentResets()
+    try entryPricesValidateAndCalculateSignedChanges()
     print("PriceCore checks passed")
 } catch {
     fputs("PriceCore check failed: \(error)\n", stderr)

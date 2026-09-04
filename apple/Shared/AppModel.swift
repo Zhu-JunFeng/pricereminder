@@ -18,6 +18,7 @@ final class AppModel: ObservableObject {
     @Published var rules: [AlertRule] = LocalPersistence.loadRules()
     @Published var marketRules: [MarketAlertRule] = LocalPersistence.loadMarketRules()
     @Published private(set) var history: [TriggerRecord] = LocalPersistence.loadHistory()
+    @Published private(set) var entryPrices: [String: EntryPriceSetting] = [:]
     @Published private(set) var monitorState: MonitorState = .disconnected
     @Published private(set) var statusMessage = "监控未启动"
     @Published private(set) var backgroundStatusMessage = "仅支持前台监控"
@@ -69,6 +70,10 @@ final class AppModel: ObservableObject {
         self.market = BinanceMarketClient()
         self.stream = PriceStream()
         self.marketStream = PriceStream()
+
+        for setting in LocalPersistence.loadEntryPrices() {
+            entryPrices[setting.symbol] = setting
+        }
 
         let restored = LocalPersistence.loadPrices()
         buffer.restore(restored)
@@ -304,6 +309,57 @@ final class AppModel: ObservableObject {
 
     func orderedContracts(query: String = "") -> [Contract] {
         ContractOrdering.ordered(contracts, recentSymbols: recentSymbols, query: query)
+    }
+
+    func setEntryPrice(symbol: String, priceText: String, positionSide: PositionSide) throws {
+        let setting = try EntryPriceSetting(
+            symbol: symbol, priceText: priceText, positionSide: positionSide
+        )
+        entryPrices[setting.symbol] = setting
+        persistEntryPrices()
+    }
+
+    func useCurrentPriceAsEntry(
+        symbol: String, positionSide: PositionSide, now: Date = Date()
+    ) throws {
+        let normalized = symbol.uppercased()
+        guard let current = prices[normalized] else {
+            throw PriceCoreError.currentPriceUnavailable
+        }
+        guard !isPriceStale(current, now: now) else {
+            throw PriceCoreError.currentPriceStale
+        }
+        try setEntryPrice(
+            symbol: normalized, priceText: current.priceText, positionSide: positionSide
+        )
+    }
+
+    func clearEntryPrice(symbol: String) {
+        entryPrices.removeValue(forKey: symbol.uppercased())
+        persistEntryPrices()
+    }
+
+    func entryPriceChange(for symbol: String) -> EntryPriceChange? {
+        let normalized = symbol.uppercased()
+        guard let setting = entryPrices[normalized], let current = prices[normalized] else {
+            return nil
+        }
+        return EntryPriceCalculator.change(
+            currentPrice: current.price,
+            entryPrice: setting.price,
+            positionSide: setting.positionSide
+        )
+    }
+
+    func isPriceStale(_ point: PricePoint, now: Date = Date()) -> Bool {
+        EntryPriceCalculator.isStale(
+            eventTime: point.eventTime,
+            nowMilliseconds: Int64(now.timeIntervalSince1970 * 1_000)
+        )
+    }
+
+    private func persistEntryPrices() {
+        LocalPersistence.saveEntryPrices(entryPrices.values.sorted { $0.symbol < $1.symbol })
     }
 
     #if os(iOS)

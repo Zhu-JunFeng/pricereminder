@@ -20,6 +20,9 @@ internal sealed class MainForm : Form
     private readonly Label symbolLabel = new();
     private readonly Label priceLabel = new();
     private readonly Label updatedLabel = new();
+    private readonly Label entryPriceLabel = new();
+    private readonly Label entryChangeLabel = new();
+    private readonly Button entryPriceEditButton = new();
     private readonly Button monitorButton = new();
     private readonly ComboBox primarySymbol = new();
     private readonly ComboBox ruleSymbol = new();
@@ -35,6 +38,7 @@ internal sealed class MainForm : Form
     private readonly Label contractsError = new();
     private readonly CheckBox startupCheck = new();
     private readonly Label diagnosticsLabel = new();
+    private readonly System.Windows.Forms.Timer freshnessTimer = new() { Interval = 1_000 };
     private Panel? ruleWindowField;
     private Panel? ruleThresholdField;
     private Panel? targetDirectionField;
@@ -46,6 +50,7 @@ internal sealed class MainForm : Form
     private bool updatingContractCombos;
     private Guid? editingRuleId;
     private Guid? editingMarketRuleId;
+    private MonitorSnapshot? latestSnapshot;
 
     public event Action? TestNotificationRequested;
 
@@ -78,6 +83,8 @@ internal sealed class MainForm : Form
         RefreshRules();
         RefreshHistory();
         startupCheck.Checked = StartupManager.Enabled;
+        freshnessTimer.Tick += (_, _) => RefreshEntryPrice(latestSnapshot);
+        freshnessTimer.Start();
     }
 
     public void SetContracts(IReadOnlyList<Contract> values)
@@ -96,6 +103,7 @@ internal sealed class MainForm : Form
 
     public void ApplySnapshot(MonitorSnapshot snapshot)
     {
+        latestSnapshot = snapshot;
         statusLabel.Text = snapshot.Message;
         sourceLabel.Text = snapshot.Source == ConnectionSource.Direct ? "终端直连" : "服务端中继";
         sourceLabel.ForeColor = snapshot.Connected ? Primary : Warning;
@@ -115,6 +123,7 @@ internal sealed class MainForm : Form
             priceLabel.Text = "--";
             updatedLabel.Text = "等待第一条价格";
         }
+        RefreshEntryPrice(snapshot);
         var lastReceived = snapshot.LastReceivedAt?.ToLocalTime().ToString("HH:mm:ss", CultureInfo.InvariantCulture) ?? "尚未收到";
         var lastMarketReceived = snapshot.LastMarketReceivedAt?.ToLocalTime().ToString("HH:mm:ss", CultureInfo.InvariantCulture) ?? "尚未收到";
         var latestEvent = snapshot.Prices.Values.Select(item => item.EventTime).DefaultIfEmpty(0).Max();
@@ -194,8 +203,33 @@ internal sealed class MainForm : Form
         layout.SetColumnSpan(priceLabel, 2);
         updatedLabel.AutoSize = true;
         updatedLabel.ForeColor = Muted;
-        layout.Controls.Add(updatedLabel, 0, 4);
-        layout.SetColumnSpan(updatedLabel, 2);
+        var priceMeta = new TableLayoutPanel
+        {
+            AutoSize = true, Dock = DockStyle.Top, ColumnCount = 1, RowCount = 2,
+            Margin = Padding.Empty, Padding = Padding.Empty,
+        };
+        priceMeta.Controls.Add(updatedLabel, 0, 0);
+        var entryRow = new FlowLayoutPanel
+        {
+            AutoSize = true, Dock = DockStyle.Top, WrapContents = false,
+            Margin = new Padding(0, 12, 0, 0), Padding = Padding.Empty,
+        };
+        entryPriceLabel.AutoSize = true;
+        entryPriceLabel.ForeColor = Muted;
+        entryPriceLabel.Font = new Font("Cascadia Mono", 9.5f, FontStyle.Regular);
+        entryChangeLabel.AutoSize = true;
+        entryChangeLabel.Font = new Font("Cascadia Mono", 9.5f, FontStyle.Bold);
+        entryChangeLabel.Margin = new Padding(10, 3, 0, 0);
+        entryPriceEditButton.Text = "编辑";
+        entryPriceEditButton.AutoSize = true;
+        entryPriceEditButton.Margin = new Padding(10, 0, 0, 0);
+        StyleSecondaryButton(entryPriceEditButton);
+        entryPriceEditButton.Padding = new Padding(6, 2, 6, 2);
+        entryPriceEditButton.Click += (_, _) => ShowEntryPriceEditor();
+        entryRow.Controls.AddRange([entryPriceLabel, entryChangeLabel, entryPriceEditButton]);
+        priceMeta.Controls.Add(entryRow, 0, 1);
+        layout.Controls.Add(priceMeta, 0, 4);
+        layout.SetColumnSpan(priceMeta, 2);
 
         var divider = new Panel { Height = 1, Dock = DockStyle.Top, BackColor = Divider, Margin = new Padding(0, 12, 0, 16) };
         layout.Controls.Add(divider, 0, 5);
@@ -395,6 +429,174 @@ internal sealed class MainForm : Form
         RefreshContractCombos();
         store.Save();
         monitor.SubscriptionsChanged();
+        RefreshEntryPrice(latestSnapshot);
+    }
+
+    private void RefreshEntryPrice(MonitorSnapshot? snapshot)
+    {
+        var symbol = store.State.PrimarySymbol;
+        if (!store.State.EntryPrices.TryGetValue(symbol, out var entryPrice))
+        {
+            entryPriceLabel.Text = "设置开仓价";
+            entryPriceLabel.ForeColor = Primary;
+            entryChangeLabel.Text = "";
+            return;
+        }
+        var positionSide = store.State.EntryPriceSides.GetValueOrDefault(symbol, PositionSide.Long);
+        var sideText = positionSide == PositionSide.Long ? "多" : "空";
+        entryPriceLabel.Text = $"{sideText} · 开仓 {entryPrice}";
+        entryPriceLabel.ForeColor = Muted;
+        if (snapshot is null || !snapshot.Prices.TryGetValue(symbol, out var current))
+        {
+            entryChangeLabel.Text = "等待当前价格";
+            entryChangeLabel.ForeColor = Muted;
+            return;
+        }
+        var change = EntryPriceCalculator.Change(current.PriceText, entryPrice, positionSide);
+        var stale = snapshot.StaleSymbols.Contains(symbol) || EntryPriceCalculator.IsStale(
+            current.EventTime, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+        entryChangeLabel.Text = stale ? $"{change.PercentageText} · 价格已陈旧" : change.PercentageText;
+        entryChangeLabel.ForeColor = stale ? Muted : change.Direction switch
+        {
+            EntryPriceDirection.Rise => Color.FromArgb(23, 138, 84),
+            EntryPriceDirection.Fall => Color.FromArgb(198, 61, 61),
+            _ => Muted,
+        };
+    }
+
+    private void ShowEntryPriceEditor()
+    {
+        var symbol = store.State.PrimarySymbol;
+        using var dialog = new Form
+        {
+            Text = $"{symbol} 开仓参考价", StartPosition = FormStartPosition.CenterParent,
+            FormBorderStyle = FormBorderStyle.FixedDialog, MinimizeBox = false, MaximizeBox = false,
+            ClientSize = new Size(440, 276), BackColor = Color.White, Font = Font,
+        };
+        var layout = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill, Padding = new Padding(20), ColumnCount = 1, RowCount = 5,
+        };
+        layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        var input = new TextBox
+        {
+            Text = store.State.EntryPrices.GetValueOrDefault(symbol, ""),
+            Dock = DockStyle.Top, Font = new Font("Cascadia Mono", 11),
+        };
+        layout.Controls.Add(new Label { Text = "开仓价格", AutoSize = true, ForeColor = Muted }, 0, 0);
+        layout.Controls.Add(input, 0, 1);
+        var savedSide = store.State.EntryPriceSides.GetValueOrDefault(symbol, PositionSide.Long);
+        var sideSelector = new FlowLayoutPanel
+        {
+            AutoSize = true, Dock = DockStyle.Top, WrapContents = false,
+            Margin = new Padding(0, 12, 0, 0),
+        };
+        sideSelector.Controls.Add(new Label
+        {
+            Text = "仓位方向", AutoSize = true, ForeColor = Muted,
+            Margin = new Padding(0, 4, 12, 0),
+        });
+        var longSide = new RadioButton
+        {
+            Text = "多单", AutoSize = true, Checked = savedSide == PositionSide.Long,
+        };
+        var shortSide = new RadioButton
+        {
+            Text = "空单", AutoSize = true, Checked = savedSide == PositionSide.Short,
+            Margin = new Padding(16, 3, 3, 3),
+        };
+        sideSelector.Controls.AddRange([longSide, shortSide]);
+        layout.Controls.Add(sideSelector, 0, 2);
+        layout.Controls.Add(new Label
+        {
+            Text = "按所选多空方向计算价格收益率，不包含杠杆和仓位数量。",
+            AutoSize = true, ForeColor = Muted, Margin = new Padding(0, 12, 0, 0),
+        }, 0, 3);
+        var actions = new FlowLayoutPanel
+        {
+            AutoSize = true, Dock = DockStyle.Fill, FlowDirection = FlowDirection.RightToLeft,
+            WrapContents = false,
+        };
+        var save = new Button { Text = "保存", AutoSize = true };
+        StylePrimaryButton(save);
+        save.Click += (_, _) =>
+        {
+            try
+            {
+                store.State.EntryPrices[symbol] = EntryPriceCalculator.Normalize(input.Text);
+                store.State.EntryPriceSides[symbol] = shortSide.Checked
+                    ? PositionSide.Short : PositionSide.Long;
+                store.Save();
+                dialog.DialogResult = DialogResult.OK;
+            }
+            catch (FormatException error)
+            {
+                MessageBox.Show(dialog, error.Message, "无法保存", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }
+        };
+        var cancel = new Button { Text = "取消", AutoSize = true, DialogResult = DialogResult.Cancel };
+        StyleSecondaryButton(cancel);
+        var useCurrent = new Button { Text = "使用当前价", AutoSize = true };
+        StyleSecondaryButton(useCurrent);
+        useCurrent.Enabled = TryGetFreshCurrentPrice(symbol, out _, out _);
+        useCurrent.Click += (_, _) =>
+        {
+            if (!TryGetFreshCurrentPrice(symbol, out var current, out var message))
+            {
+                MessageBox.Show(dialog, message, "当前价不可用", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+            store.State.EntryPrices[symbol] = current!.PriceText;
+            store.State.EntryPriceSides[symbol] = shortSide.Checked
+                ? PositionSide.Short : PositionSide.Long;
+            store.Save();
+            dialog.DialogResult = DialogResult.OK;
+        };
+        actions.Controls.Add(save);
+        actions.Controls.Add(cancel);
+        actions.Controls.Add(useCurrent);
+        if (store.State.EntryPrices.ContainsKey(symbol))
+        {
+            var clear = new Button { Text = "清除", AutoSize = true };
+            StyleSecondaryButton(clear);
+            clear.ForeColor = Color.FromArgb(198, 61, 61);
+            clear.Click += (_, _) =>
+            {
+                store.State.EntryPrices.Remove(symbol);
+                store.State.EntryPriceSides.Remove(symbol);
+                store.Save();
+                dialog.DialogResult = DialogResult.OK;
+            };
+            actions.Controls.Add(clear);
+        }
+        layout.Controls.Add(actions, 0, 4);
+        dialog.AcceptButton = save;
+        dialog.CancelButton = cancel;
+        dialog.Controls.Add(layout);
+        dialog.ShowDialog(this);
+        RefreshEntryPrice(latestSnapshot);
+    }
+
+    private bool TryGetFreshCurrentPrice(string symbol, out PricePoint? point, out string message)
+    {
+        var snapshot = latestSnapshot ?? monitor.Snapshot();
+        if (!snapshot.Prices.TryGetValue(symbol, out point))
+        {
+            message = "当前合约还没有可用价格";
+            return false;
+        }
+        if (snapshot.StaleSymbols.Contains(symbol) || EntryPriceCalculator.IsStale(
+            point.EventTime, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()))
+        {
+            message = "当前价格已陈旧，不能用作开仓价格";
+            return false;
+        }
+        message = "";
+        return true;
     }
 
     private void SaveRule()

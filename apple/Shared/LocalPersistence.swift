@@ -60,6 +60,10 @@ enum LocalPersistence {
     static func saveMarketRules(_ rules: [MarketAlertRule]) { save(rules, name: "market-rules.json") }
     static func loadHistory() -> [TriggerRecord] { load("history.json") }
     static func saveHistory(_ history: [TriggerRecord]) { save(history, name: "history.json") }
+    static func loadEntryPrices() -> [EntryPriceSetting] { load("entry-prices.json") }
+    static func saveEntryPrices(_ prices: [EntryPriceSetting]) {
+        save(prices, name: "entry-prices.json")
+    }
 
     static func loadPrices() -> [PricePoint] {
         let cutoff = Int64(Date().addingTimeInterval(-60 * 60).timeIntervalSince1970 * 1_000)

@@ -243,6 +243,9 @@ public enum PriceCoreError: LocalizedError {
     case invalidWindow
     case invalidThreshold
     case invalidTargetPrice
+    case invalidEntryPrice
+    case currentPriceUnavailable
+    case currentPriceStale
     case duplicateRule
     case invalidServerResponse
     case invalidExchangeResponse
@@ -254,6 +257,9 @@ public enum PriceCoreError: LocalizedError {
         case .invalidWindow: "时间窗口必须在 1 到 60 分钟之间"
         case .invalidThreshold: "变化阈值必须在 0.1% 到 100% 之间"
         case .invalidTargetPrice: "目标价格必须大于 0"
+        case .invalidEntryPrice: "开仓价格必须是大于 0 的数字"
+        case .currentPriceUnavailable: "当前合约还没有可用价格"
+        case .currentPriceStale: "当前价格已陈旧，不能用作开仓价格"
         case .duplicateRule: "相同合约、窗口和阈值的规则已存在"
         case .invalidServerResponse: "服务器响应无效"
         case .invalidExchangeResponse: "币安响应无效"

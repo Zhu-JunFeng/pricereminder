@@ -10,7 +10,10 @@ import kotlinx.coroutines.launch
 import world.zcn.pricereminder.data.ContractDto
 import world.zcn.pricereminder.data.StoredRule
 import world.zcn.pricereminder.data.StoredMarketRule
+import world.zcn.pricereminder.data.StoredEntryPrice
 import world.zcn.pricereminder.data.TriggerHistory
+import world.zcn.pricereminder.core.EntryPriceCalculator
+import world.zcn.pricereminder.core.PositionSide
 import world.zcn.pricereminder.monitor.MonitorBus
 import world.zcn.pricereminder.monitor.NotificationCoordinator
 import java.util.UUID
@@ -22,6 +25,7 @@ data class AppUiState(
     val history: List<TriggerHistory> = emptyList(),
     val primarySymbol: String = "BTCUSDT",
     val recentSymbols: List<String> = listOf("BTCUSDT"),
+    val entryPrices: Map<String, StoredEntryPrice> = emptyMap(),
     val loading: Boolean = true,
     val error: String? = null,
     val selfCheckMessage: String? = null,
@@ -35,6 +39,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             history = container.localStore.history(),
             primarySymbol = container.localStore.primarySymbol,
             recentSymbols = container.localStore.recentSymbols,
+            entryPrices = container.localStore.entryPrices().associateBy { it.symbol },
         )
     )
     val state: StateFlow<AppUiState> = mutableState.asStateFlow()
@@ -171,6 +176,33 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         mutableState.value = mutableState.value.copy(recentSymbols = recent)
     }
 
+    fun setEntryPrice(symbol: String, priceText: String, positionSide: PositionSide): String? {
+        val normalized = runCatching { EntryPriceCalculator.normalize(priceText) }
+            .getOrElse { return "开仓价格必须是大于 0 的数字" }
+        val normalizedSymbol = symbol.uppercase()
+        val setting = StoredEntryPrice(
+            symbol = normalizedSymbol,
+            priceText = normalized,
+            positionSide = positionSide.name.lowercase(),
+        )
+        saveEntryPrices(mutableState.value.entryPrices + (normalizedSymbol to setting))
+        return null
+    }
+
+    fun useCurrentPriceAsEntry(symbol: String, positionSide: PositionSide): String? {
+        val normalized = symbol.uppercase()
+        val monitor = MonitorBus.state.value
+        val current = monitor.prices[normalized] ?: return "当前合约还没有可用价格"
+        val stale = normalized in monitor.staleSymbols ||
+            EntryPriceCalculator.isStale(current.eventTime, System.currentTimeMillis())
+        if (stale) return "当前价格已陈旧，不能用作开仓价格"
+        return setEntryPrice(normalized, current.price, positionSide)
+    }
+
+    fun clearEntryPrice(symbol: String) {
+        saveEntryPrices(mutableState.value.entryPrices - symbol.uppercase())
+    }
+
     fun toggleRule(id: String, enabled: Boolean) {
         saveRules(mutableState.value.rules.map {
             if (it.id == id) it.copy(enabled = enabled, riseTriggered = false, fallTriggered = false, targetTriggered = false) else it
@@ -207,6 +239,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         container.localStore.saveMarketRules(rules)
         mutableState.value = mutableState.value.copy(marketRules = rules)
         syncSubscriptions()
+    }
+
+    private fun saveEntryPrices(prices: Map<String, StoredEntryPrice>) {
+        container.localStore.saveEntryPrices(
+            prices.toSortedMap().values.toList()
+        )
+        mutableState.value = mutableState.value.copy(entryPrices = prices)
     }
 
     private fun syncSubscriptions() {

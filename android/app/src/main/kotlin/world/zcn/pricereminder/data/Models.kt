@@ -26,6 +26,13 @@ data class StoredMarketRule(
 )
 
 @Serializable
+data class StoredEntryPrice(
+    val symbol: String,
+    val priceText: String,
+    val positionSide: String = "long",
+)
+
+@Serializable
 data class TriggerHistory(
     val id: String,
     val symbol: String,

@@ -26,6 +26,7 @@ import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuBox
@@ -39,13 +40,18 @@ import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -59,10 +65,15 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import world.zcn.pricereminder.AppUiState
 import world.zcn.pricereminder.MainViewModel
 import world.zcn.pricereminder.data.ContractDto
+import world.zcn.pricereminder.data.StoredEntryPrice
 import world.zcn.pricereminder.data.StoredRule
 import world.zcn.pricereminder.data.StoredMarketRule
 import world.zcn.pricereminder.core.ContractOrdering
+import world.zcn.pricereminder.core.EntryPriceCalculator
+import world.zcn.pricereminder.core.EntryPriceDirection
+import world.zcn.pricereminder.core.PositionSide
 import world.zcn.pricereminder.monitor.MonitorBus
+import kotlinx.coroutines.delay
 import java.math.RoundingMode
 import java.text.DateFormat
 import java.util.Date
@@ -88,7 +99,7 @@ fun PriceReminderApp(viewModel: MainViewModel, onStartMonitor: () -> Unit, onSto
         Column(Modifier.fillMaxSize().padding(padding)) {
             state.error?.let { StatusBanner(it, MaterialTheme.colorScheme.error) }
             when (tab) {
-                0 -> MarketScreen(state, monitor, viewModel::selectPrimary, onStartMonitor, onStopMonitor)
+                0 -> MarketScreen(state, monitor, viewModel, onStartMonitor, onStopMonitor)
                 1 -> RulesScreen(state, viewModel)
                 else -> SettingsScreen(state, monitor, viewModel)
             }
@@ -108,16 +119,25 @@ private fun StatusBanner(message: String, color: Color) {
 private fun MarketScreen(
     state: AppUiState,
     monitor: world.zcn.pricereminder.monitor.MonitorSnapshot,
-    onSelect: (String) -> Unit,
+    viewModel: MainViewModel,
     onStart: () -> Unit,
     onStop: () -> Unit,
 ) {
     val current = monitor.prices[state.primarySymbol]
+    var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(current?.eventTime) {
+        while (true) {
+            now = System.currentTimeMillis()
+            delay(1_000)
+        }
+    }
     val currentIsStale = state.primarySymbol in monitor.staleSymbols
+        || (current != null && EntryPriceCalculator.isStale(current.eventTime, now))
+    var editingEntryPrice by remember(state.primarySymbol) { mutableStateOf(false) }
     Column(Modifier.fillMaxSize().padding(horizontal = 20.dp, vertical = 18.dp)) {
         Text("实时价格", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.SemiBold)
         Spacer(Modifier.height(18.dp))
-        ContractPicker(state.contracts, state.recentSymbols, state.primarySymbol, "主合约", onSelect)
+        ContractPicker(state.contracts, state.recentSymbols, state.primarySymbol, "主合约", viewModel::selectPrimary)
         Spacer(Modifier.height(28.dp))
         Text(state.primarySymbol, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Text(
@@ -128,6 +148,13 @@ private fun MarketScreen(
         Text(
             if (current == null) "等待第一条价格" else "币安最新成交价 · ${DateFormat.getTimeInstance(DateFormat.MEDIUM).format(Date(current.eventTime))}",
             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.height(14.dp))
+        EntryPriceSummary(
+            entryPrice = state.entryPrices[state.primarySymbol],
+            currentPrice = current?.price,
+            stale = currentIsStale,
+            onEdit = { editingEntryPrice = true },
         )
         Spacer(Modifier.height(28.dp))
         HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.6f))
@@ -149,6 +176,117 @@ private fun MarketScreen(
         }
         if (state.loading) Box(Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
     }
+    if (editingEntryPrice) {
+        EntryPriceEditor(
+            symbol = state.primarySymbol,
+            savedEntry = state.entryPrices[state.primarySymbol],
+            canUseCurrent = current != null && !currentIsStale,
+            onUseCurrent = { viewModel.useCurrentPriceAsEntry(state.primarySymbol, it) },
+            onSave = { price, side -> viewModel.setEntryPrice(state.primarySymbol, price, side) },
+            onClear = { viewModel.clearEntryPrice(state.primarySymbol) },
+            onDismiss = { editingEntryPrice = false },
+        )
+    }
+}
+
+@Composable
+private fun EntryPriceSummary(
+    entryPrice: StoredEntryPrice?, currentPrice: String?, stale: Boolean, onEdit: () -> Unit,
+) {
+    TextButton(onClick = onEdit, contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp)) {
+        if (entryPrice == null) {
+            Text("设置开仓价")
+        } else {
+            val positionSide = PositionSide.valueOf(entryPrice.positionSide.uppercase())
+            val sideText = if (positionSide == PositionSide.LONG) "多" else "空"
+            Text("$sideText · 开仓 ${entryPrice.priceText}", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (currentPrice != null) {
+                val change = EntryPriceCalculator.change(currentPrice, entryPrice.priceText, positionSide)
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    if (stale) "${change.percentageText} · 价格已陈旧" else change.percentageText,
+                    color = if (stale) MaterialTheme.colorScheme.onSurfaceVariant else when (change.direction) {
+                        EntryPriceDirection.RISE -> RiseColor
+                        EntryPriceDirection.FALL -> FallColor
+                        EntryPriceDirection.FLAT -> MaterialTheme.colorScheme.onSurfaceVariant
+                    },
+                )
+            }
+        }
+        Spacer(Modifier.width(7.dp))
+        Icon(Icons.Outlined.Edit, contentDescription = "编辑开仓价", modifier = Modifier.width(16.dp))
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun EntryPriceEditor(
+    symbol: String,
+    savedEntry: StoredEntryPrice?,
+    canUseCurrent: Boolean,
+    onUseCurrent: (PositionSide) -> String?,
+    onSave: (String, PositionSide) -> String?,
+    onClear: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var priceText by remember(symbol, savedEntry) { mutableStateOf(savedEntry?.priceText ?: "") }
+    var positionSide by remember(symbol, savedEntry) {
+        mutableStateOf(
+            savedEntry?.let { PositionSide.valueOf(it.positionSide.uppercase()) } ?: PositionSide.LONG
+        )
+    }
+    var error by remember(symbol) { mutableStateOf<String?>(null) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("$symbol 开仓参考价") },
+        text = {
+            Column {
+                SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+                    listOf(PositionSide.LONG to "多单", PositionSide.SHORT to "空单")
+                        .forEachIndexed { index, item ->
+                            SegmentedButton(
+                                selected = positionSide == item.first,
+                                onClick = { positionSide = item.first },
+                                shape = SegmentedButtonDefaults.itemShape(index, 2),
+                            ) { Text(item.second) }
+                        }
+                }
+                Spacer(Modifier.height(12.dp))
+                OutlinedTextField(
+                    value = priceText,
+                    onValueChange = { priceText = it.filter { char -> char.isDigit() || char == '.' } },
+                    label = { Text("开仓价格") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                TextButton(
+                    onClick = {
+                        error = onUseCurrent(positionSide)
+                        if (error == null) onDismiss()
+                    },
+                    enabled = canUseCurrent,
+                ) { Text("使用当前价") }
+                Text(
+                    "按所选多空方向计算价格收益率，不包含杠杆和仓位数量。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
+                if (savedEntry != null) {
+                    TextButton(onClick = { onClear(); onDismiss() }) {
+                        Text("清除开仓价", color = MaterialTheme.colorScheme.error)
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = {
+                error = onSave(priceText, positionSide)
+                if (error == null) onDismiss()
+            }) { Text("保存") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
+    )
 }
 
 @Composable

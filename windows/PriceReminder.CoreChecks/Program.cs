@@ -15,6 +15,7 @@ internal static class CoreChecks
             TargetPriceTriggersAndRearms();
             RecentContractsLeadMatchingResultsWithoutChangingTheRest();
             MarketScannerUsesRollingExtremesAndIndependentResets();
+            EntryPricesValidateCalculateAndPersist();
             Console.WriteLine("PriceReminder Windows core checks passed");
             return 0;
         }
@@ -23,6 +24,45 @@ internal static class CoreChecks
             Console.Error.WriteLine(error.Message);
             return 1;
         }
+    }
+
+    private static void EntryPricesValidateCalculateAndPersist()
+    {
+        Expect(EntryPriceCalculator.Normalize(" 100.0000 ") == "100.0000", "entry price must normalize input");
+        foreach (var invalid in new[] { "", "abc", "0", "-1" })
+        {
+            try
+            {
+                EntryPriceCalculator.Normalize(invalid);
+                throw new InvalidOperationException($"invalid entry price {invalid} must be rejected");
+            }
+            catch (FormatException) { }
+        }
+        Expect(EntryPriceCalculator.Change("104.265", "100", PositionSide.Long).PercentageText == "+4.27%", "long gain must round");
+        Expect(EntryPriceCalculator.Change("95.735", "100", PositionSide.Long).PercentageText == "-4.27%", "long loss must keep its sign");
+        Expect(EntryPriceCalculator.Change("95.735", "100", PositionSide.Short).PercentageText == "+4.27%", "short must gain when price falls");
+        Expect(EntryPriceCalculator.Change("104.265", "100", PositionSide.Short).PercentageText == "-4.27%", "short must lose when price rises");
+        Expect(EntryPriceCalculator.Change("99.999999", "100", PositionSide.Long).PercentageText == "0.00%", "negative zero must normalize");
+        Expect(!EntryPriceCalculator.IsStale(1_000, 31_000), "exactly 30 seconds must remain fresh");
+        Expect(EntryPriceCalculator.IsStale(1_000, 31_001), "prices older than 30 seconds must be stale");
+
+        var state = new PersistedState();
+        state.EntryPrices["BTCUSDT"] = "100";
+        state.EntryPrices["BTCUSDT"] = "101";
+        state.EntryPriceSides["BTCUSDT"] = PositionSide.Short;
+        state.TraySymbols.Clear();
+        var json = System.Text.Json.JsonSerializer.Serialize(state);
+        var restored = System.Text.Json.JsonSerializer.Deserialize<PersistedState>(json)!;
+        Expect(restored.EntryPrices["BTCUSDT"] == "101", "entry price must overwrite and survive restart");
+        Expect(restored.EntryPriceSides["BTCUSDT"] == PositionSide.Short, "entry side must survive restart");
+        var legacy = System.Text.Json.JsonSerializer.Deserialize<PersistedState>(
+            "{\"EntryPrices\":{\"ETHUSDT\":\"2000\"}}")!;
+        Expect(legacy.EntryPriceSides.GetValueOrDefault("ETHUSDT", PositionSide.Long) == PositionSide.Long,
+            "entry prices without a side must migrate to long");
+        restored.EntryPrices.Remove("BTCUSDT");
+        restored.EntryPriceSides.Remove("BTCUSDT");
+        Expect(restored.EntryPrices.Count == 0, "entry price must clear only when explicitly removed");
+        Expect(restored.EntryPriceSides.Count == 0, "entry side must clear with its price");
     }
 
     private static void MarketScannerUsesRollingExtremesAndIndependentResets()
