@@ -36,13 +36,13 @@ class NotificationCoordinator(private val context: Context) {
             }
             val direction = if (it.direction.name == "RISE") "上涨" else "下跌"
             val change = (it.changePercent ?: java.math.BigDecimal.ZERO).setScale(2, RoundingMode.HALF_UP).toPlainString()
-            "${it.windowMinutes}分钟$direction $change%（阈值 ${it.thresholdText}%）"
+            "${it.windowMinutes}分钟$direction $change%（阈值${it.thresholdText}%）\n${it.baselinePriceText}->${it.priceText}"
         }
         manager.notify(("alert:$symbol:${triggers.first().eventTime}").hashCode(), NotificationCompat.Builder(context, ALERT_CHANNEL)
             .setSmallIcon(android.R.drawable.stat_notify_more)
-            .setContentTitle(if (triggers.any { it.kind.name == "MARKET_PERCENTAGE" }) "$symbol 全市场预警" else "$symbol 价格预警")
+            .setContentTitle("$symbol 价格预警")
             .setContentText(summary)
-            .setStyle(NotificationCompat.BigTextStyle().bigText("$summary\n最新价 ${triggers.first().priceText}"))
+            .setStyle(NotificationCompat.BigTextStyle().bigText(summary))
             .setAutoCancel(true)
             .build())
     }

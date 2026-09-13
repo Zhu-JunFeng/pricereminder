@@ -840,16 +840,15 @@ final class AppModel: ObservableObject {
     private func sendAlertNotification(symbol: String, triggers: [AlertTrigger]) async {
         guard notificationsAllowed else { return }
         let content = UNMutableNotificationContent()
-        content.title = triggers.contains(where: { $0.kind == .marketPercentage })
-            ? "\(symbol) 全市场预警" : "\(symbol) 价格预警"
+        content.title = "\(symbol) 价格预警"
         content.body = triggers.map {
             if $0.kind == .target {
                 let direction = $0.direction == .rise ? "达到或高于" : "达到或低于"
                 return "\(direction)目标价 \($0.targetPriceText ?? "--")"
             }
             let direction = $0.direction == .rise ? "上涨" : "下跌"
-            return "\($0.windowMinutes)分钟\(direction) \(($0.changePercent ?? .zero).formatted(.number.precision(.fractionLength(2))))%（阈值 \($0.thresholdText)%）"
-        }.joined(separator: "；") + " · 最新价 \(triggers[0].priceText)"
+            return "\($0.windowMinutes)分钟\(direction) \(($0.changePercent ?? .zero).formatted(.number.precision(.fractionLength(2))))%（阈值\($0.thresholdText)%）\n\($0.baselinePriceText)->\($0.priceText)"
+        }.joined(separator: "；")
         content.sound = .default
         try? await UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: "alert:\(symbol):\(triggers[0].eventTime)", content: content, trigger: nil))
     }

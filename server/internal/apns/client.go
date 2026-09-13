@@ -77,6 +77,7 @@ func makeAlertPayload(eventID string, payload json.RawMessage) ([]byte, error) {
 			WindowMinutes int    `json:"windowMinutes"`
 			TargetPrice   string `json:"targetPrice"`
 			Price         string `json:"price"`
+			BaselinePrice string `json:"baselinePrice"`
 		} `json:"triggers"`
 	}
 	if err := json.Unmarshal(payload, &event); err != nil {
@@ -99,13 +100,10 @@ func makeAlertPayload(eventID string, payload json.RawMessage) ([]byte, error) {
 		if trigger.Direction == "fall" {
 			direction = "下跌"
 		}
-		parts = append(parts, fmt.Sprintf("%d分钟%s %s%%（阈值 %s%%）", trigger.WindowMinutes, direction, trigger.ChangePct, trigger.ThresholdPct))
+		parts = append(parts, fmt.Sprintf("%d分钟%s %s%%（阈值%s%%）\n%s->%s", trigger.WindowMinutes, direction, trigger.ChangePct, trigger.ThresholdPct, trigger.BaselinePrice, trigger.Price))
 	}
-	body := strings.Join(parts, "；") + " · 最新价 " + event.Triggers[0].Price
+	body := strings.Join(parts, "；")
 	title := event.Symbol + " 价格预警"
-	if event.Triggers[0].Kind == "market_percentage" {
-		title = event.Symbol + " 全市场预警"
-	}
 	return json.Marshal(map[string]any{
 		"aps": map[string]any{
 			"alert": map[string]string{"title": title, "body": body},

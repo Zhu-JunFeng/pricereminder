@@ -90,9 +90,9 @@ internal sealed class TrayApplicationContext : ApplicationContext
         var body = string.Join("；", triggers.Select(trigger => trigger.Kind == AlertRuleKind.Target
             ? $"{(trigger.Direction == TriggerDirection.Rise ? "达到或高于" : "达到或低于")}目标价 {trigger.TargetPriceText}"
             : $"{trigger.WindowMinutes}分钟{(trigger.Direction == TriggerDirection.Rise ? "上涨" : "下跌")} " +
-              $"{(trigger.ChangePercent ?? 0):F2}%（阈值 {trigger.ThresholdText}%）"));
-        var title = first.Kind == AlertRuleKind.MarketPercentage ? $"{first.Symbol} 全市场预警" : $"{first.Symbol} 价格预警";
-        trayIcon.ShowBalloonTip(8000, title, $"{body} · 最新价 {first.PriceText}",
+              $"{trigger.BaselinePriceText}->{trigger.PriceText}"));
+        var title = $"{first.Symbol} 价格预警";
+        trayIcon.ShowBalloonTip(8000, title, body,
             first.Direction == TriggerDirection.Rise ? ToolTipIcon.Info : ToolTipIcon.Warning);
         mainForm.RefreshHistory();
     }
