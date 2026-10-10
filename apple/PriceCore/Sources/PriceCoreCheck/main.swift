@@ -213,6 +213,27 @@ func entryPricesValidateAndCalculateSignedChanges() throws {
     let legacy = Data(#"[{"symbol":"ETHUSDT","priceText":"2000"}]"#.utf8)
     let legacySetting = try JSONDecoder().decode([EntryPriceSetting].self, from: legacy)[0]
     try expect(legacySetting.positionSide == .long, "entry prices without a side must migrate to long")
+    try expect(legacySetting.leverage == 1, "legacy entry prices must default to 1x")
+    let legacyShort = Data(#"{"symbol":"ETHUSDT","priceText":"2000","positionSide":"short"}"#.utf8)
+    let restoredShort = try JSONDecoder().decode(EntryPriceSetting.self, from: legacyShort)
+    try expect(restoredShort.positionSide == .short && restoredShort.leverage == 1, "migration must preserve short positions")
+    let leveraged = try EntryPriceSetting(symbol: "ETHUSDT", priceText: "100", positionSide: .short, leverage: 10)
+    let leveragedRoundTrip = try JSONDecoder().decode(EntryPriceSetting.self, from: JSONEncoder().encode(leveraged))
+    try expect(leveragedRoundTrip == leveraged, "leverage must survive persistence")
+    for side in [PositionSide.long, .short] {
+        let gain = EntryPriceCalculator.change(currentPrice: 104.265, entryPrice: 100, positionSide: side, leverage: 10)
+        let loss = EntryPriceCalculator.change(currentPrice: 95.735, entryPrice: 100, positionSide: side, leverage: 10)
+        try expect(gain.percentageText == (side == .long ? "+42.65%" : "-42.65%"), "multiply before rounding and respect side")
+        try expect(loss.percentageText == (side == .long ? "-42.65%" : "+42.65%"), "leveraged down move must respect side")
+        let flat = EntryPriceCalculator.change(currentPrice: 100, entryPrice: 100, positionSide: side, leverage: 10)
+        try expect(flat.percentageText == "0.00%", "leverage must preserve flat returns")
+    }
+    for invalid in [0, -1] {
+        do {
+            _ = try EntryPriceSetting(symbol: "ETHUSDT", priceText: "100", leverage: invalid)
+            throw CheckError.failed("nonpositive leverage must be rejected")
+        } catch PriceCoreError.invalidLeverage {}
+    }
     try expect(!EntryPriceCalculator.isStale(eventTime: 1_000, nowMilliseconds: 31_000), "exactly 30 seconds must remain fresh")
     try expect(EntryPriceCalculator.isStale(eventTime: 1_000, nowMilliseconds: 31_001), "prices older than 30 seconds must be stale")
 }

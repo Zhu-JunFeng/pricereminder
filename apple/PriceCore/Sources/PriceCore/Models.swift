@@ -244,6 +244,7 @@ public enum PriceCoreError: LocalizedError {
     case invalidThreshold
     case invalidTargetPrice
     case invalidEntryPrice
+    case invalidLeverage
     case currentPriceUnavailable
     case currentPriceStale
     case duplicateRule
@@ -258,6 +259,7 @@ public enum PriceCoreError: LocalizedError {
         case .invalidThreshold: "变化阈值必须在 0.1% 到 100% 之间"
         case .invalidTargetPrice: "目标价格必须大于 0"
         case .invalidEntryPrice: "开仓价格必须是大于 0 的数字"
+        case .invalidLeverage: "杠杆倍数必须是大于 0 的整数"
         case .currentPriceUnavailable: "当前合约还没有可用价格"
         case .currentPriceStale: "当前价格已陈旧，不能用作开仓价格"
         case .duplicateRule: "相同合约、窗口和阈值的规则已存在"

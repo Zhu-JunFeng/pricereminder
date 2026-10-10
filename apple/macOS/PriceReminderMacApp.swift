@@ -105,7 +105,7 @@ private struct MenuPriceRow: View {
             if let setting = model.entryPrices[symbol] {
                 TimelineView(.periodic(from: .now, by: 1)) { context in
                     HStack(spacing: 8) {
-                        Text("\(setting.positionSide.displayName) · 开仓 \(setting.priceText)")
+                        Text("\(setting.positionSide.displayName) · \(setting.leverage)倍 · 开仓 \(setting.priceText)")
                         Spacer()
                         if let change = model.entryPriceChange(for: symbol) {
                             let stale = model.prices[symbol].map {
@@ -176,6 +176,7 @@ struct MacSettingsView: View {
     @State private var editingMarketRuleID: UUID?
     @State private var entryPriceDrafts: [String: String] = [:]
     @State private var entrySideDrafts: [String: PositionSide] = [:]
+    @State private var entryLeverageDrafts: [String: String] = [:]
     @State private var entryPriceError: String?
 
     var body: some View {
@@ -199,6 +200,17 @@ struct MacSettingsView: View {
                                 .frame(width: 84)
                                 TextField("输入开仓价", text: entryPriceBinding(for: symbol))
                                     .textFieldStyle(.roundedBorder)
+                                    .frame(minWidth: 90)
+                                    .accessibilityLabel("\(symbol)开仓价格")
+                                HStack(spacing: 4) {
+                                    Text("杠杆").font(.caption)
+                                    TextField("1", text: entryLeverageBinding(for: symbol))
+                                        .textFieldStyle(.roundedBorder)
+                                        .frame(width: 48)
+                                        .accessibilityLabel("\(symbol)杠杆倍数")
+                                    Text("倍").font(.caption)
+                                }
+                                .help("收益率按杠杆倍数计算，默认 1 倍")
                                 Button("保存") { saveEntryPrice(for: symbol) }
                                 Button("使用当前价") { useCurrentPrice(for: symbol) }
                                     .disabled(!canUseCurrentPrice(for: symbol))
@@ -214,6 +226,8 @@ struct MacSettingsView: View {
                         if let entryPriceError {
                             Text(entryPriceError).font(.caption).foregroundStyle(AppTheme.fall)
                         }
+                        Text("参考收益率 = 多空价格涨跌幅 × 杠杆倍数，不含手续费和资金费。")
+                            .font(.caption).foregroundStyle(.secondary)
                     }
                 }
 
@@ -434,7 +448,15 @@ struct MacSettingsView: View {
         for symbol in model.menuSymbols {
             entryPriceDrafts[symbol] = model.entryPrices[symbol]?.priceText ?? ""
             entrySideDrafts[symbol] = model.entryPrices[symbol]?.positionSide ?? .long
+            entryLeverageDrafts[symbol] = String(model.entryPrices[symbol]?.leverage ?? 1)
         }
+    }
+
+    private func entryLeverageBinding(for symbol: String) -> Binding<String> {
+        Binding(
+            get: { entryLeverageDrafts[symbol] ?? String(model.entryPrices[symbol]?.leverage ?? 1) },
+            set: { entryLeverageDrafts[symbol] = $0 }
+        )
     }
 
     private func saveEntryPrice(for symbol: String) {
@@ -442,10 +464,12 @@ struct MacSettingsView: View {
             try model.setEntryPrice(
                 symbol: symbol,
                 priceText: entryPriceDrafts[symbol] ?? "",
-                positionSide: entrySideDrafts[symbol] ?? .long
+                positionSide: entrySideDrafts[symbol] ?? .long,
+                leverageText: entryLeverageBinding(for: symbol).wrappedValue
             )
             entryPriceDrafts[symbol] = model.entryPrices[symbol]?.priceText
             entrySideDrafts[symbol] = model.entryPrices[symbol]?.positionSide ?? .long
+            entryLeverageDrafts[symbol] = String(model.entryPrices[symbol]?.leverage ?? 1)
             entryPriceError = nil
         } catch {
             entryPriceError = "\(symbol)：\(error.localizedDescription)"
@@ -455,10 +479,12 @@ struct MacSettingsView: View {
     private func useCurrentPrice(for symbol: String) {
         do {
             try model.useCurrentPriceAsEntry(
-                symbol: symbol, positionSide: entrySideDrafts[symbol] ?? .long
+                symbol: symbol, positionSide: entrySideDrafts[symbol] ?? .long,
+                leverageText: entryLeverageBinding(for: symbol).wrappedValue
             )
             entryPriceDrafts[symbol] = model.entryPrices[symbol]?.priceText
             entrySideDrafts[symbol] = model.entryPrices[symbol]?.positionSide ?? .long
+            entryLeverageDrafts[symbol] = String(model.entryPrices[symbol]?.leverage ?? 1)
             entryPriceError = nil
         } catch {
             entryPriceError = "\(symbol)：\(error.localizedDescription)"
@@ -469,6 +495,7 @@ struct MacSettingsView: View {
         model.clearEntryPrice(symbol: symbol)
         entryPriceDrafts[symbol] = ""
         entrySideDrafts[symbol] = .long
+        entryLeverageDrafts[symbol] = "1"
         entryPriceError = nil
     }
 

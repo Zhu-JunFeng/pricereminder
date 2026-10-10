@@ -311,16 +311,19 @@ final class AppModel: ObservableObject {
         ContractOrdering.ordered(contracts, recentSymbols: recentSymbols, query: query)
     }
 
-    func setEntryPrice(symbol: String, priceText: String, positionSide: PositionSide) throws {
+    func setEntryPrice(symbol: String, priceText: String, positionSide: PositionSide, leverageText: String = "1") throws {
+        guard let leverage = Int(leverageText.trimmingCharacters(in: .whitespacesAndNewlines)), leverage > 0 else {
+            throw PriceCoreError.invalidLeverage
+        }
         let setting = try EntryPriceSetting(
-            symbol: symbol, priceText: priceText, positionSide: positionSide
+            symbol: symbol, priceText: priceText, positionSide: positionSide, leverage: leverage
         )
         entryPrices[setting.symbol] = setting
         persistEntryPrices()
     }
 
     func useCurrentPriceAsEntry(
-        symbol: String, positionSide: PositionSide, now: Date = Date()
+        symbol: String, positionSide: PositionSide, leverageText: String = "1", now: Date = Date()
     ) throws {
         let normalized = symbol.uppercased()
         guard let current = prices[normalized] else {
@@ -330,7 +333,7 @@ final class AppModel: ObservableObject {
             throw PriceCoreError.currentPriceStale
         }
         try setEntryPrice(
-            symbol: normalized, priceText: current.priceText, positionSide: positionSide
+            symbol: normalized, priceText: current.priceText, positionSide: positionSide, leverageText: leverageText
         )
     }
 
@@ -347,7 +350,8 @@ final class AppModel: ObservableObject {
         return EntryPriceCalculator.change(
             currentPrice: current.price,
             entryPrice: setting.price,
-            positionSide: setting.positionSide
+            positionSide: setting.positionSide,
+            leverage: setting.leverage
         )
     }
 

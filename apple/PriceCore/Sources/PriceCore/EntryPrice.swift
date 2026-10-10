@@ -22,12 +22,13 @@ public struct EntryPriceSetting: Codable, Hashable, Sendable {
     public let symbol: String
     public let priceText: String
     public let positionSide: PositionSide
+    public let leverage: Int
 
     public var price: Decimal {
         Decimal(string: priceText, locale: Locale(identifier: "en_US_POSIX"))!
     }
 
-    public init(symbol: String, priceText: String, positionSide: PositionSide = .long) throws {
+    public init(symbol: String, priceText: String, positionSide: PositionSide = .long, leverage: Int = 1) throws {
         let normalizedSymbol = symbol.uppercased()
         let normalizedPrice = priceText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard normalizedSymbol.range(of: "^[A-Z0-9]{2,30}$", options: .regularExpression) != nil,
@@ -38,10 +39,12 @@ public struct EntryPriceSetting: Codable, Hashable, Sendable {
         self.symbol = normalizedSymbol
         self.priceText = normalizedPrice
         self.positionSide = positionSide
+        guard leverage > 0 else { throw PriceCoreError.invalidLeverage }
+        self.leverage = leverage
     }
 
     private enum CodingKeys: String, CodingKey {
-        case symbol, priceText, positionSide
+        case symbol, priceText, positionSide, leverage
     }
 
     public init(from decoder: Decoder) throws {
@@ -49,7 +52,8 @@ public struct EntryPriceSetting: Codable, Hashable, Sendable {
         try self.init(
             symbol: values.decode(String.self, forKey: .symbol),
             priceText: values.decode(String.self, forKey: .priceText),
-            positionSide: values.decodeIfPresent(PositionSide.self, forKey: .positionSide) ?? .long
+            positionSide: values.decodeIfPresent(PositionSide.self, forKey: .positionSide) ?? .long,
+            leverage: values.decodeIfPresent(Int.self, forKey: .leverage) ?? 1
         )
     }
 }
@@ -66,13 +70,13 @@ public enum EntryPriceCalculator {
     }
 
     public static func change(
-        currentPrice: Decimal, entryPrice: Decimal, positionSide: PositionSide
+        currentPrice: Decimal, entryPrice: Decimal, positionSide: PositionSide, leverage: Int = 1
     ) -> EntryPriceChange {
         let priceDifference = switch positionSide {
         case .long: currentPrice - entryPrice
         case .short: entryPrice - currentPrice
         }
-        let rawPercentage = priceDifference / entryPrice * 100
+        let rawPercentage = priceDifference / entryPrice * 100 * Decimal(leverage)
         var source = rawPercentage
         var rounded = Decimal()
         NSDecimalRound(&rounded, &source, 2, .plain)
