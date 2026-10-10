@@ -63,6 +63,9 @@ jobs:
           java-version: "17"
           cache: gradle
       - uses: android-actions/setup-android@v3
+        with:
+          # Legacy "tools" is no longer available in the Android SDK repository.
+          packages: platform-tools
       - name: Test and build Android APK
         working-directory: android
         env:
