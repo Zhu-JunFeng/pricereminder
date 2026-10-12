@@ -786,7 +786,7 @@ internal sealed class MainForm : Form
         foreach (var rule in store.State.MarketRules)
         {
             rulesList.Items.Add(new ListViewItem(new[] {
-                "全部 USDT 永续", $"{rule.WindowMinutes} 分钟内上涨或下跌 ≥ {rule.ThresholdText}%",
+                "全部 USDT / USDC 永续", $"{rule.WindowMinutes} 分钟内上涨或下跌 ≥ {rule.ThresholdText}%",
                 rule.Enabled ? "已启用" : "已暂停",
             }) { Tag = $"market:{rule.Id}", ForeColor = rule.Enabled ? Ink : Muted, ImageIndex = 0 });
         }

@@ -88,7 +88,7 @@ final class AppModel: ObservableObject {
     func bootstrap(platform: String) async {
         do {
             contracts = try await market.contracts()
-            validMarketSymbols = Set(contracts.filter { $0.quoteAsset == "USDT" }.map(\.symbol))
+            validMarketSymbols = Set(contracts.filter { $0.quoteAsset == "USDT" || $0.quoteAsset == "USDC" }.map(\.symbol))
             connectMarketIfNeeded()
             if !monitoringEnabled {
                 statusMessage = "可直接连接币安行情"
@@ -98,6 +98,7 @@ final class AppModel: ObservableObject {
                 contracts = try await ServerConnectionService.shared.contracts(
                     platform: platform, displayName: platform == "macos" ? "Mac" : "iPhone"
                 )
+                validMarketSymbols = Set(contracts.filter { $0.quoteAsset == "USDT" || $0.quoteAsset == "USDC" }.map(\.symbol))
                 connectMarketIfNeeded()
                 if !monitoringEnabled {
                     statusMessage = "通过服务端获取币安合约"

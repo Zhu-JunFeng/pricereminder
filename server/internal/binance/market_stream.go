@@ -86,7 +86,7 @@ func consumeMarketStream(ctx context.Context, wsURL string, catalog *Catalog, pu
 			return fmt.Errorf("decode Binance all-market prices: %w", err)
 		}
 		for _, event := range events {
-			if event.EventType != "24hrMiniTicker" || event.ClosePrice == "0" || !catalog.ContainsUSDT(event.Symbol) {
+			if event.EventType != "24hrMiniTicker" || event.ClosePrice == "0" || !catalog.ContainsSupportedQuote(event.Symbol) {
 				continue
 			}
 			point, err := domain.NewPricePoint(event.Symbol, event.ClosePrice, event.EventTime)

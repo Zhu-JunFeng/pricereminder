@@ -37,7 +37,7 @@ class ApiClient(
                 .filter { symbol ->
                     symbol.status == "TRADING" &&
                         symbol.contractType == "PERPETUAL" &&
-                        symbol.quoteAsset == "USDT"
+                        (symbol.quoteAsset == "USDT" || symbol.quoteAsset == "USDC")
                 }
                 .mapNotNull { symbol ->
                     val tickSize = symbol.filters.firstOrNull { filter -> filter.filterType == "PRICE_FILTER" }?.tickSize

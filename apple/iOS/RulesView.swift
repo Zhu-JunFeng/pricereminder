@@ -36,7 +36,7 @@ struct RulesView: View {
                     ForEach(model.marketRules) { rule in
                         HStack(spacing: 12) {
                             VStack(alignment: .leading, spacing: 4) {
-                                Text("全部 USDT 永续").font(.headline)
+                                Text("全部 USDT / USDC 永续").font(.headline)
                                 Text("\(rule.windowMinutes) 分钟内涨跌 ≥ \(rule.thresholdText)%")
                                     .font(.caption).foregroundStyle(.secondary)
                             }
@@ -156,7 +156,7 @@ private struct RuleEditorView: View {
                 }
                 .pickerStyle(.segmented)
                 if kind == .marketPercentage {
-                    LabeledContent("范围", value: "币安全部 USDT 永续")
+                    LabeledContent("范围", value: "币安全部 USDT / USDC 永续")
                 } else {
                     Button { showingContracts = true } label: {
                         LabeledContent("合约") {
@@ -229,7 +229,7 @@ private struct RuleEditorView: View {
         case .percentage:
             "当前价相对 N 分钟前上涨或下跌达到阈值时提醒；两个方向独立重新武装。"
         case .marketPercentage:
-            "扫描全部 USDT 永续；窗口内相对最低价上涨或最高价下跌达到阈值时立即提醒。"
+            "扫描全部 USDT / USDC 永续；窗口内相对最低价上涨或最高价下跌达到阈值时立即提醒。"
         case .target:
             "当前价进入目标区间时提醒一次；离开目标区间后自动重新武装。"
         }

@@ -118,7 +118,7 @@ internal sealed class MonitorService : IDisposable
             marketCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             try
             {
-                var contracts = await api.BinanceUSDTContractsAsync(marketCancellation.Token);
+                var contracts = await api.BinancePerpetualContractsAsync(marketCancellation.Token);
                 var validSymbols = contracts.Select(item => item.Symbol).ToHashSet(StringComparer.OrdinalIgnoreCase);
                 using var socket = api.CreateDirectSocket();
                 lock (gate) { marketMessage = "正在连接币安全市场行情"; marketContractCount = 0; }

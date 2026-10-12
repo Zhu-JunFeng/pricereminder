@@ -358,7 +358,7 @@ private fun RulesScreen(state: AppUiState, viewModel: MainViewModel) {
         items(state.marketRules, key = { "market:${it.id}" }) { rule ->
             Row(Modifier.fillMaxWidth().padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
-                    Text("全部 USDT 永续", fontWeight = FontWeight.SemiBold)
+                    Text("全部 USDT / USDC 永续", fontWeight = FontWeight.SemiBold)
                     Text(
                         "${rule.windowMinutes} 分钟内上涨或下跌 ≥ ${rule.thresholdText}%",
                         style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -436,7 +436,7 @@ private fun AddRuleForm(
             }
         }
         if (kind == "market_percentage") {
-            Text("范围：币安全部 USDT 永续", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("范围：币安全部 USDT / USDC 永续", color = MaterialTheme.colorScheme.onSurfaceVariant)
         } else {
             ContractPicker(contracts, recentSymbols, symbol, "U本位永续合约") {
                 symbol = it

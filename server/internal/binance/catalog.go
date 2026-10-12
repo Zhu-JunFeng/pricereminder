@@ -49,11 +49,11 @@ func (c *Catalog) Contains(symbol string) bool {
 	return ok
 }
 
-func (c *Catalog) ContainsUSDT(symbol string) bool {
+func (c *Catalog) ContainsSupportedQuote(symbol string) bool {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	contract, ok := c.bySymbol[symbol]
-	return ok && contract.QuoteAsset == "USDT"
+	return ok && (contract.QuoteAsset == "USDT" || contract.QuoteAsset == "USDC")
 }
 
 type exchangeInfo struct {

@@ -43,7 +43,7 @@ public actor BinanceMarketClient {
         return exchangeInfo.symbols.compactMap { item in
             guard item.status == "TRADING",
                   item.contractType == "PERPETUAL",
-                  item.quoteAsset == "USDT",
+                  (item.quoteAsset == "USDT" || item.quoteAsset == "USDC"),
                   let tickSize = item.filters.first(where: { $0.filterType == "PRICE_FILTER" })?.tickSize else {
                 return nil
             }

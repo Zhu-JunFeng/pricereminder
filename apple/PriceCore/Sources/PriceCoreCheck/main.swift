@@ -80,12 +80,15 @@ func decodesBinanceContractsAndTrades() throws {
       {"symbol":"ETHUSDT","status":"TRADING","contractType":"PERPETUAL","baseAsset":"ETH","quoteAsset":"USDT","filters":[{"filterType":"PRICE_FILTER","tickSize":"0.01"}]},
       {"symbol":"BTCUSDT","status":"TRADING","contractType":"PERPETUAL","baseAsset":"BTC","quoteAsset":"USDT","filters":[{"filterType":"PRICE_FILTER","tickSize":"0.10"}]},
       {"symbol":"BTCUSDC","status":"TRADING","contractType":"PERPETUAL","baseAsset":"BTC","quoteAsset":"USDC","filters":[{"filterType":"PRICE_FILTER","tickSize":"0.10"}]},
+      {"symbol":"BTCBUSD","status":"TRADING","contractType":"PERPETUAL","baseAsset":"BTC","quoteAsset":"BUSD","filters":[{"filterType":"PRICE_FILTER","tickSize":"0.10"}]},
+      {"symbol":"BTCUSDC_QUARTER","status":"TRADING","contractType":"CURRENT_QUARTER","baseAsset":"BTC","quoteAsset":"USDC","filters":[{"filterType":"PRICE_FILTER","tickSize":"0.10"}]},
       {"symbol":"OLDUSDT","status":"SETTLING","contractType":"PERPETUAL","baseAsset":"OLD","quoteAsset":"USDT","filters":[{"filterType":"PRICE_FILTER","tickSize":"0.001"}]}
     ]}
     """.utf8)
     let contracts = try BinanceMarketClient.decodeContracts(from: exchangeInfo)
-    try expect(contracts.map(\.symbol) == ["BTCUSDT", "ETHUSDT"], "catalog must contain only trading USDT perpetual contracts")
+    try expect(contracts.map(\.symbol) == ["BTCUSDC", "BTCUSDT", "ETHUSDT"], "catalog must contain trading USDT and USDC perpetual contracts")
     try expect(contracts.first?.tickSize == "0.10", "catalog must retain the Binance price tick size")
+    try expect(ContractOrdering.ordered(contracts, recentSymbols: [], query: "USDC").map(\.symbol) == ["BTCUSDC"], "USDC contracts must be searchable independently")
 
     let trade = Data(#"{"e":"trade","E":1787363070000,"s":"BTCUSDT","p":"64231.50","q":"0.010"}"#.utf8)
     let combinedTrade = Data(#"{"stream":"btcusdt@trade","data":{"e":"trade","E":1787363070001,"s":"BTCUSDT","p":"64232.00","q":"0.020"}}"#.utf8)

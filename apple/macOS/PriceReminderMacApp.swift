@@ -37,7 +37,7 @@ private struct MenuBarLabel: View {
                     Text("·").foregroundStyle(.secondary)
                 }
                 HStack(spacing: 2) {
-                    let shortSymbol = symbol.replacingOccurrences(of: "USDT", with: "")
+                    let shortSymbol = symbol.hasSuffix("USDT") ? String(symbol.dropLast(4)) : symbol
                     Text("\(shortSymbol) \(model.prices[symbol]?.priceText ?? "--")")
                     PriceTrendArrow(trend: model.consecutivePriceTrends[symbol], size: 7)
                 }
@@ -279,7 +279,7 @@ struct MacSettingsView: View {
 
                 HStack(spacing: 10) {
                     if ruleKind == .marketPercentage {
-                        Text("全部 USDT 永续").frame(maxWidth: 220, alignment: .leading)
+                        Text("全部 USDT / USDC 永续").frame(maxWidth: 220, alignment: .leading)
                     } else {
                         Button { showingRuleContracts.toggle() } label: {
                             HStack(spacing: 6) {
@@ -353,7 +353,7 @@ struct MacSettingsView: View {
                         ForEach(model.marketRules) { rule in
                             HStack(spacing: 12) {
                                 VStack(alignment: .leading, spacing: 3) {
-                                    Text("全部 USDT 永续").font(.headline)
+                                    Text("全部 USDT / USDC 永续").font(.headline)
                                     Text("\(rule.windowMinutes)分钟内涨跌 ≥ \(rule.thresholdText)%")
                                         .foregroundStyle(.secondary)
                                 }

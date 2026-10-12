@@ -33,8 +33,8 @@ internal sealed class ApiClient
         }
     }
 
-    public async Task<IReadOnlyList<Contract>> BinanceUSDTContractsAsync(CancellationToken cancellationToken) =>
-        (await DirectContractsAsync(cancellationToken)).Where(item => item.QuoteAsset == "USDT").ToArray();
+    public async Task<IReadOnlyList<Contract>> BinancePerpetualContractsAsync(CancellationToken cancellationToken) =>
+        (await DirectContractsAsync(cancellationToken)).Where(item => (item.QuoteAsset == "USDT" || item.QuoteAsset == "USDC")).ToArray();
 
     public Uri AllMarketUri() => new(BinanceAllMarketUrl);
 

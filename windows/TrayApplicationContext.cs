@@ -126,6 +126,6 @@ internal sealed class TrayApplicationContext : ApplicationContext
     }
 
     private static string ShortSymbol(string symbol) => symbol.EndsWith("USDT", StringComparison.OrdinalIgnoreCase)
-        ? symbol[..^4] : symbol.EndsWith("USDC", StringComparison.OrdinalIgnoreCase) ? symbol[..^4] : symbol;
+        ? symbol[..^4] : symbol;
     private static string LimitTooltip(string text) => text.Length <= 63 ? text : text[..62];
 }
