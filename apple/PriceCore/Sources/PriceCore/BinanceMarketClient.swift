@@ -38,6 +38,23 @@ public actor BinanceMarketClient {
         return try Self.decodeContracts(from: data)
     }
 
+    public func dailyOpen(symbol: String, start: Int64) async throws -> Decimal {
+        var url = URLComponents(url: exchangeInfoURL, resolvingAgainstBaseURL: false)!
+        url.path = "/fapi/v1/klines"
+        url.queryItems = [
+            URLQueryItem(name: "symbol", value: symbol),
+            URLQueryItem(name: "interval", value: "1m"),
+            URLQueryItem(name: "startTime", value: String(start)),
+            URLQueryItem(name: "endTime", value: String(start + 59_999)),
+            URLQueryItem(name: "limit", value: "1")
+        ]
+        let (data, response) = try await session.data(for: URLRequest(url: url.url!, timeoutInterval: 15))
+        guard let http = response as? HTTPURLResponse, 200..<300 ~= http.statusCode else {
+            throw PriceCoreError.invalidExchangeResponse
+        }
+        return try BeijingDailyPrice.decodeOpen(from: data, start: start)
+    }
+
     package static func decodeContracts(from data: Data) throws -> [Contract] {
         let exchangeInfo = try JSONDecoder().decode(ExchangeInfo.self, from: data)
         return exchangeInfo.symbols.compactMap { item in

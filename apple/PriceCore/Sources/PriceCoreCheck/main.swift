@@ -241,7 +241,25 @@ func entryPricesValidateAndCalculateSignedChanges() throws {
     try expect(EntryPriceCalculator.isStale(eventTime: 1_000, nowMilliseconds: 31_001), "prices older than 30 seconds must be stale")
 }
 
+func dailyBaselineUsesBeijingMidnight() throws {
+    let midnight = Date(timeIntervalSince1970: 1_792_080_000) // 2026-10-16 00:00 UTC+8
+    let start = BeijingDailyPrice.startMilliseconds(at: midnight)
+    try expect(start == 1_792_080_000_000, "Beijing midnight must be UTC 16:00")
+    try expect(BeijingDailyPrice.startMilliseconds(at: midnight.addingTimeInterval(-0.001)) == start - 86_400_000, "before midnight must use previous day")
+    try expect(BeijingDailyPrice.startMilliseconds(at: midnight.addingTimeInterval(86_400)) == start + 86_400_000, "midnight must reset baseline")
+    let data = Data("[[\(start),\"100.00\"]]".utf8)
+    let price = try BeijingDailyPrice.decodeOpen(from: data, start: start)
+    try expect(price == 100, "must use candle open")
+    try expect(EntryPriceCalculator.change(currentPrice: 104, entryPrice: price, positionSide: .long).percentageText == "+4.00%", "daily return must not use position leverage")
+    for invalid in ["[]", "[[\(start + 60_000),\"100\"]]", "[[\(start),\"0\"]]"] {
+        var rejected = false
+        do { _ = try BeijingDailyPrice.decodeOpen(from: Data(invalid.utf8), start: start) } catch { rejected = true }
+        try expect(rejected, "missing or incorrect midnight candle must not become a baseline")
+    }
+}
+
 do {
+    try dailyBaselineUsesBeijingMidnight()
     try equalThresholdTriggersAndRearms()
     try directionsAreIndependent()
     try incompleteWindowDoesNotTrigger()

@@ -14,6 +14,33 @@ import AppKit
 final class AppModel: ObservableObject {
     @Published private(set) var contracts: [Contract] = []
     @Published private(set) var prices: [String: PricePoint] = [:]
+    @Published private(set) var dailyOpens: [String: (start: Int64, price: Decimal)] = [:]
+    @Published private(set) var dailyOpenFailures: Set<String> = []
+
+    func loadDailyOpen(symbol: String, start: Int64) async {
+        if dailyOpens[symbol]?.start == start { return }
+        dailyOpenFailures.remove(symbol)
+        while !Task.isCancelled {
+            do {
+                let price = try await market.dailyOpen(symbol: symbol, start: start)
+                guard !Task.isCancelled, BeijingDailyPrice.startMilliseconds(at: Date()) == start else { return }
+                dailyOpens[symbol] = (start, price)
+                dailyOpenFailures.remove(symbol)
+                return
+            } catch {
+                guard !Task.isCancelled else { return }
+                dailyOpenFailures.insert(symbol)
+                do { try await Task.sleep(for: .seconds(30)) } catch { return }
+            }
+        }
+    }
+
+    func dailyChange(symbol: String, now: Date) -> EntryPriceChange? {
+        let start = BeijingDailyPrice.startMilliseconds(at: now)
+        guard let baseline = dailyOpens[symbol], baseline.start == start,
+              let point = prices[symbol], point.eventTime >= start else { return nil }
+        return EntryPriceCalculator.change(currentPrice: point.price, entryPrice: baseline.price, positionSide: .long)
+    }
     @Published private(set) var consecutivePriceTrends: [String: ConsecutivePriceTrend] = [:]
     @Published var rules: [AlertRule] = LocalPersistence.loadRules()
     @Published var marketRules: [MarketAlertRule] = LocalPersistence.loadMarketRules()

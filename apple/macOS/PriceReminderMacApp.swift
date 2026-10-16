@@ -102,6 +102,26 @@ private struct MenuPriceRow: View {
                     PriceTrendArrow(trend: model.consecutivePriceTrends[symbol], size: 9)
                 }
             }
+            TimelineView(.periodic(from: .now, by: 1)) { context in
+                HStack {
+                    Text("24h 涨幅 · 北京时间 00:00 起").foregroundStyle(.secondary)
+                    Spacer()
+                    if let change = model.dailyChange(symbol: symbol, now: context.date) {
+                        let stale = model.prices[symbol].map { model.isPriceStale($0, now: context.date) } ?? true
+                        Text(stale ? "\(change.percentageText) · 价格已陈旧" : change.percentageText)
+                            .foregroundStyle(stale ? Color.secondary : color(for: change.direction))
+                    } else {
+                        Text(model.dailyOpenFailures.contains(symbol) ? "暂不可用" : "加载中…")
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .font(.caption)
+                .numericPriceStyle()
+                .help("北京时间每日 00:00 起，按该分钟 K 线开盘价计算，不含杠杆；非滚动 24 小时涨幅。")
+                .task(id: "\(symbol):\(BeijingDailyPrice.startMilliseconds(at: context.date))") {
+                    await model.loadDailyOpen(symbol: symbol, start: BeijingDailyPrice.startMilliseconds(at: context.date))
+                }
+            }
             if let setting = model.entryPrices[symbol] {
                 TimelineView(.periodic(from: .now, by: 1)) { context in
                     HStack(spacing: 8) {
