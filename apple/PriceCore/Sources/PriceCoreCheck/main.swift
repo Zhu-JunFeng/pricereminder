@@ -81,12 +81,14 @@ func decodesBinanceContractsAndTrades() throws {
       {"symbol":"BTCUSDT","status":"TRADING","contractType":"PERPETUAL","baseAsset":"BTC","quoteAsset":"USDT","filters":[{"filterType":"PRICE_FILTER","tickSize":"0.10"}]},
       {"symbol":"BTCUSDC","status":"TRADING","contractType":"PERPETUAL","baseAsset":"BTC","quoteAsset":"USDC","filters":[{"filterType":"PRICE_FILTER","tickSize":"0.10"}]},
       {"symbol":"BTCBUSD","status":"TRADING","contractType":"PERPETUAL","baseAsset":"BTC","quoteAsset":"BUSD","filters":[{"filterType":"PRICE_FILTER","tickSize":"0.10"}]},
+      {"symbol":"SNDKUSDT","status":"TRADING","contractType":"TRADIFI_PERPETUAL","baseAsset":"SNDK","quoteAsset":"USDT","filters":[{"filterType":"PRICE_FILTER","tickSize":"0.01"}]},
       {"symbol":"BTCUSDC_QUARTER","status":"TRADING","contractType":"CURRENT_QUARTER","baseAsset":"BTC","quoteAsset":"USDC","filters":[{"filterType":"PRICE_FILTER","tickSize":"0.10"}]},
       {"symbol":"OLDUSDT","status":"SETTLING","contractType":"PERPETUAL","baseAsset":"OLD","quoteAsset":"USDT","filters":[{"filterType":"PRICE_FILTER","tickSize":"0.001"}]}
     ]}
     """.utf8)
     let contracts = try BinanceMarketClient.decodeContracts(from: exchangeInfo)
-    try expect(contracts.map(\.symbol) == ["BTCUSDC", "BTCUSDT", "ETHUSDT"], "catalog must contain trading USDT and USDC perpetual contracts")
+    try expect(contracts.map(\.symbol) == ["BTCUSDC", "BTCUSDT", "ETHUSDT", "SNDKUSDT"], "catalog must include traditional finance perpetual contracts")
+    try expect(ContractOrdering.ordered(contracts, recentSymbols: [], query: "sndk").map(\.symbol) == ["SNDKUSDT"], "SNDK search must find tradifi perpetuals")
     try expect(contracts.first?.tickSize == "0.10", "catalog must retain the Binance price tick size")
     try expect(ContractOrdering.ordered(contracts, recentSymbols: [], query: "USDC").map(\.symbol) == ["BTCUSDC"], "USDC contracts must be searchable independently")
 
@@ -258,7 +260,39 @@ func dailyBaselineUsesBeijingMidnight() throws {
     }
 }
 
+func positionPersistenceChecks() throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    let setting = try EntryPriceSetting(symbol: "ETHUSDC", priceText: "100", leverage: 10)
+    let legacy = directory.appendingPathComponent("entry-prices.json")
+    try JSONEncoder().encode([setting]).write(to: legacy)
+    let store = PositionStore(directory: directory)
+    var positions = try store.load()
+    try expect(positions.count == 1, "legacy position must migrate")
+    let initialID = positions[0].id
+    let reloaded = try store.load()
+    try expect(reloaded[0].id == initialID, "migration must not repeat")
+    positions.append(PositionRecord(setting: try EntryPriceSetting(symbol: "ETHUSDC", priceText: "200", positionSide: .short, leverage: 5)))
+    try store.save(positions)
+    let multiple = try store.load()
+    try expect(multiple.count == 2, "same contract must support independent positions")
+    positions.removeFirst()
+    try store.save(positions)
+    let remaining = try store.load()
+    try expect(remaining[0].setting.priceText == "200", "deleting one position must preserve the other")
+    try store.save([])
+    let empty = try store.load()
+    try expect(empty.isEmpty, "empty list must not remigrate legacy records")
+    try Data("broken".utf8).write(to: directory.appendingPathComponent("positions.json"))
+    var failed = false
+    do { _ = try store.load() } catch { failed = true }
+    try expect(failed, "corrupt position storage must surface an error")
+    try expect(FileManager.default.fileExists(atPath: legacy.path), "legacy backup must survive")
+}
+
 do {
+    try positionPersistenceChecks()
     try dailyBaselineUsesBeijingMidnight()
     try equalThresholdTriggersAndRearms()
     try directionsAreIndependent()

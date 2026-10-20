@@ -36,7 +36,7 @@ class ApiClient(
                 .asSequence()
                 .filter { symbol ->
                     symbol.status == "TRADING" &&
-                        symbol.contractType == "PERPETUAL" &&
+                        (symbol.contractType == "PERPETUAL" || symbol.contractType == "TRADIFI_PERPETUAL") &&
                         (symbol.quoteAsset == "USDT" || symbol.quoteAsset == "USDC")
                 }
                 .mapNotNull { symbol ->

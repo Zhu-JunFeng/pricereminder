@@ -117,7 +117,7 @@ internal sealed class ApiClient
         var exchange = await JsonSerializer.DeserializeAsync<ExchangeInfo>(stream, JsonOptions, cancellationToken)
             ?? throw new InvalidDataException("币安合约列表格式错误");
         return exchange.Symbols
-            .Where(item => item.Status == "TRADING" && item.ContractType == "PERPETUAL"
+            .Where(item => item.Status == "TRADING" && (item.ContractType == "PERPETUAL" || item.ContractType == "TRADIFI_PERPETUAL")
                 && (item.QuoteAsset == "USDT" || item.QuoteAsset == "USDC"))
             .Select(item => new Contract(
                 item.Symbol, item.BaseAsset, item.QuoteAsset,

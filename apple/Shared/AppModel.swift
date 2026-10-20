@@ -12,6 +12,41 @@ import AppKit
 
 @MainActor
 final class AppModel: ObservableObject {
+    #if os(macOS)
+    @Published private(set) var positions: [PositionRecord] = []
+    @Published var positionError: String?
+    @Published var settingsTab = "display"
+    private var positionsReadable = false
+    var panelSymbols: [String] {
+        menuSymbols + Set(positions.map { $0.setting.symbol }).subtracting(menuSymbols).sorted()
+    }
+    private func validateAdditionalSymbol(_ symbol: String) throws {
+        guard Set(desiredSymbols + [symbol]).count <= 50 else {
+            throw NSError(domain: "Positions", code: 2, userInfo: [NSLocalizedDescriptionKey: "最多同时订阅 50 个不同合约，请先减少订阅。"])
+        }
+    }
+    func savePosition(_ record: PositionRecord) throws {
+        guard positionsReadable else { throw NSError(domain: "Positions", code: 1, userInfo: [NSLocalizedDescriptionKey: "持仓文件读取失败，请先恢复文件后重新启动，避免覆盖记录。"]) }
+        var next = positions
+        if let index = next.firstIndex(where: { $0.id == record.id }) { next[index] = record } else { next.append(record) }
+        let symbols = Set(next.map { $0.setting.symbol } + menuSymbols + rules.filter(\.isEnabled).map(\.symbol) + [primarySymbol])
+        guard symbols.count <= 50 else { throw NSError(domain: "Positions", code: 2, userInfo: [NSLocalizedDescriptionKey: "最多同时订阅 50 个不同合约，请先减少持仓、关注或提醒合约。"]) }
+        try PositionStore(directory: LocalPersistence.directory).save(next)
+        positions = next
+        positionError = nil
+        syncSubscriptionsIfMonitoring()
+    }
+    func deletePosition(_ id: UUID) {
+        do {
+            guard positionsReadable else { return }
+            let next = positions.filter { $0.id != id }
+            try PositionStore(directory: LocalPersistence.directory).save(next)
+            positions = next
+            positionError = nil
+            syncSubscriptionsIfMonitoring()
+        } catch { positionError = error.localizedDescription }
+    }
+    #endif
     @Published private(set) var contracts: [Contract] = []
     @Published private(set) var prices: [String: PricePoint] = [:]
     @Published private(set) var dailyOpens: [String: (start: Int64, price: Decimal)] = [:]
@@ -97,6 +132,12 @@ final class AppModel: ObservableObject {
         self.market = BinanceMarketClient()
         self.stream = PriceStream()
         self.marketStream = PriceStream()
+        #if os(macOS)
+        do {
+            positions = try PositionStore(directory: LocalPersistence.directory).load()
+            positionsReadable = true
+        } catch { positionError = "持仓读取失败：\(error.localizedDescription)" }
+        #endif
 
         for setting in LocalPersistence.loadEntryPrices() {
             entryPrices[setting.symbol] = setting
@@ -193,6 +234,9 @@ final class AppModel: ObservableObject {
         }) else {
             throw PriceCoreError.duplicateRule
         }
+        #if os(macOS)
+        try validateAdditionalSymbol(candidate.symbol)
+        #endif
         rules.append(candidate)
         recordRecentSymbol(candidate.symbol)
         LocalPersistence.saveRules(rules)
@@ -211,6 +255,9 @@ final class AppModel: ObservableObject {
         if let current = prices[candidate.symbol] {
             _ = RuleEngine.initialize(rule: &candidate, current: current, buffer: buffer)
         }
+        #if os(macOS)
+        try validateAdditionalSymbol(candidate.symbol)
+        #endif
         rules.append(candidate)
         recordRecentSymbol(candidate.symbol)
         LocalPersistence.saveRules(rules)
@@ -257,6 +304,12 @@ final class AppModel: ObservableObject {
 
     func setRuleEnabled(id: UUID, enabled: Bool) {
         guard let index = rules.firstIndex(where: { $0.id == id }) else { return }
+        #if os(macOS)
+        if enabled {
+            do { try validateAdditionalSymbol(rules[index].symbol) }
+            catch { positionError = error.localizedDescription; return }
+        }
+        #endif
         rules[index].isEnabled = enabled
         rules[index].riseTriggered = false
         rules[index].fallTriggered = false
@@ -303,6 +356,9 @@ final class AppModel: ObservableObject {
         if candidate.isEnabled, let current = prices[candidate.symbol] {
             _ = RuleEngine.initialize(rule: &candidate, current: current, buffer: buffer)
         }
+        #if os(macOS)
+        if candidate.isEnabled { try validateAdditionalSymbol(candidate.symbol) }
+        #endif
         rules[index] = candidate
         recordRecentSymbol(candidate.symbol)
         LocalPersistence.saveRules(rules)
@@ -320,6 +376,11 @@ final class AppModel: ObservableObject {
     }
 
     func setMenuSymbols(_ symbols: [String]) {
+        #if os(macOS)
+        let next = Set(symbols.prefix(3))
+        let other = Set(positions.map { $0.setting.symbol } + rules.filter(\.isEnabled).map(\.symbol) + [primarySymbol])
+        guard next.union(other).count <= 50 else { positionError = "最多同时订阅 50 个不同合约"; return }
+        #endif
         let previous = Set(menuSymbols.map { $0.uppercased() })
         menuSymbols = Array(symbols.prefix(3))
         menuSymbols.filter { !previous.contains($0.uppercased()) }.forEach { recordRecentSymbol($0) }
@@ -529,6 +590,11 @@ final class AppModel: ObservableObject {
     #endif
 
     private func connect() {
+        guard desiredSymbols.count <= 50 else {
+            statusMessage = "订阅超过 50 个合约，请减少持仓、关注或提醒合约"
+            monitorState = .disconnected
+            return
+        }
         resetPriceTrends()
         streamTask?.cancel()
         priceFlushTask?.cancel()
@@ -800,7 +866,11 @@ final class AppModel: ObservableObject {
 
     private var desiredSymbols: [String] {
         let enabledRuleSymbols = rules.filter(\.isEnabled).map(\.symbol)
+        #if os(macOS)
+        return Array(Set(enabledRuleSymbols + menuSymbols + [primarySymbol] + positions.map { $0.setting.symbol })).sorted()
+        #else
         return Array(Set(enabledRuleSymbols + menuSymbols + [primarySymbol])).sorted().prefix(50).map { $0 }
+        #endif
     }
 
     private func syncSubscriptionsIfMonitoring() {

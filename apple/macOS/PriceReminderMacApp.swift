@@ -63,10 +63,16 @@ struct MenuPanel: View {
             }
             .padding(16)
             Divider()
-            ForEach(model.menuSymbols.prefix(3), id: \.self) { symbol in
-                MenuPriceRow(symbol: symbol)
-                .padding(.horizontal, 16).padding(.vertical, 12)
+            if let error = model.positionError { Text(error).font(.caption).foregroundStyle(AppTheme.fall).padding(12) }
+            ScrollView {
+                VStack(spacing: 0) {
+                    ForEach(model.panelSymbols, id: \.self) { symbol in
+                        MenuPriceRow(symbol: symbol).padding(.horizontal, 16).padding(.vertical, 12)
+                        Divider()
+                    }
+                }
             }
+            .frame(height: min(380, CGFloat(model.panelSymbols.count * 90 + model.positions.count * 22)))
             Divider()
             HStack {
                 Button(model.monitoringEnabled ? "停止监控" : "开始监控") {
@@ -74,6 +80,11 @@ struct MenuPanel: View {
                     else { Task { await model.startMonitoring() } }
                 }
                 Spacer()
+                Button("管理持仓") {
+                    model.settingsTab = "positions"
+                    NSApplication.shared.activate(ignoringOtherApps: true)
+                    openSettings()
+                }
                 Button("设置…") {
                     NSApplication.shared.activate(ignoringOtherApps: true)
                     openSettings()
@@ -83,7 +94,7 @@ struct MenuPanel: View {
             .buttonStyle(.borderless)
             .padding(14)
         }
-        .frame(width: 340)
+        .frame(width: 380)
     }
 }
 
@@ -122,24 +133,23 @@ private struct MenuPriceRow: View {
                     await model.loadDailyOpen(symbol: symbol, start: BeijingDailyPrice.startMilliseconds(at: context.date))
                 }
             }
-            if let setting = model.entryPrices[symbol] {
-                TimelineView(.periodic(from: .now, by: 1)) { context in
-                    HStack(spacing: 8) {
-                        Text("\(setting.positionSide.displayName) · \(setting.leverage)倍 · 开仓 \(setting.priceText)")
-                        Spacer()
-                        if let change = model.entryPriceChange(for: symbol) {
-                            let stale = model.prices[symbol].map {
-                                model.isPriceStale($0, now: context.date)
-                            } ?? true
-                            Text(stale ? "\(change.percentageText) · 价格已陈旧" : change.percentageText)
-                                .foregroundStyle(stale ? Color.secondary : color(for: change.direction))
-                                .accessibilityLabel(stale ? "\(change.percentageText)，价格已陈旧" : change.percentageText)
+            TimelineView(.periodic(from: .now, by: 1)) { context in
+                let point = model.prices[symbol]
+                let stale = point.map { model.isPriceStale($0, now: context.date) } ?? true
+                VStack(alignment: .leading, spacing: 5) {
+                    ForEach(model.positions.filter { $0.setting.symbol == symbol }) { position in
+                        let setting = position.setting
+                        HStack(alignment: .firstTextBaseline) {
+                            Text("\(setting.positionSide.displayName) · \(setting.leverage)倍 · 开仓 \(setting.priceText)")
+                                .lineLimit(1).truncationMode(.middle).help(setting.priceText)
+                            Spacer(minLength: 8)
+                            if let point {
+                                let change = EntryPriceCalculator.change(currentPrice: point.price, entryPrice: setting.price, positionSide: setting.positionSide, leverage: setting.leverage)
+                                Text(change.percentageText).foregroundStyle(stale ? Color.secondary : color(for: change.direction)).fixedSize()
+                            } else { Text("--") }
                         }
                     }
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .numericPriceStyle()
-                }
+                }.font(.caption).foregroundStyle(.secondary).numericPriceStyle()
             }
         }
     }
@@ -194,62 +204,12 @@ struct MacSettingsView: View {
     @State private var showingRuleContracts = false
     @State private var editingRuleID: UUID?
     @State private var editingMarketRuleID: UUID?
-    @State private var entryPriceDrafts: [String: String] = [:]
-    @State private var entrySideDrafts: [String: PositionSide] = [:]
-    @State private var entryLeverageDrafts: [String: String] = [:]
-    @State private var entryPriceError: String?
 
     var body: some View {
-        TabView {
+        TabView(selection: $model.settingsTab) {
             VStack(alignment: .leading, spacing: 14) {
                 Text("菜单栏合约").font(.title2.weight(.semibold))
                 Text("最多选择三个合约，价格每秒更新。").foregroundStyle(.secondary)
-
-                if !model.menuSymbols.isEmpty {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("开仓参考价").font(.headline)
-                        ForEach(model.menuSymbols, id: \.self) { symbol in
-                            HStack(spacing: 8) {
-                                Text(symbol).font(.subheadline.weight(.medium)).frame(width: 120, alignment: .leading)
-                                Picker("", selection: entrySideBinding(for: symbol)) {
-                                    Text("多").tag(PositionSide.long)
-                                    Text("空").tag(PositionSide.short)
-                                }
-                                .labelsHidden()
-                                .pickerStyle(.segmented)
-                                .frame(width: 84)
-                                TextField("输入开仓价", text: entryPriceBinding(for: symbol))
-                                    .textFieldStyle(.roundedBorder)
-                                    .frame(minWidth: 90)
-                                    .accessibilityLabel("\(symbol)开仓价格")
-                                HStack(spacing: 4) {
-                                    Text("杠杆").font(.caption)
-                                    TextField("1", text: entryLeverageBinding(for: symbol))
-                                        .textFieldStyle(.roundedBorder)
-                                        .frame(width: 48)
-                                        .accessibilityLabel("\(symbol)杠杆倍数")
-                                    Text("倍").font(.caption)
-                                }
-                                .help("收益率按杠杆倍数计算，默认 1 倍")
-                                Button("保存") { saveEntryPrice(for: symbol) }
-                                Button("使用当前价") { useCurrentPrice(for: symbol) }
-                                    .disabled(!canUseCurrentPrice(for: symbol))
-                                if model.entryPrices[symbol] != nil {
-                                    Button { clearEntryPrice(for: symbol) } label: {
-                                        Image(systemName: "xmark.circle")
-                                    }
-                                    .buttonStyle(.borderless)
-                                    .help("清除开仓价")
-                                }
-                            }
-                        }
-                        if let entryPriceError {
-                            Text(entryPriceError).font(.caption).foregroundStyle(AppTheme.fall)
-                        }
-                        Text("参考收益率 = 多空价格涨跌幅 × 杠杆倍数，不含手续费和资金费。")
-                            .font(.caption).foregroundStyle(.secondary)
-                    }
-                }
 
                 TextField("筛选合约代码，如 BTC", text: $contractQuery)
                     .textFieldStyle(.roundedBorder)
@@ -277,7 +237,8 @@ struct MacSettingsView: View {
                 }
             }
             .padding(20)
-            .tabItem { Label("显示", systemImage: "menubar.rectangle") }
+            .tabItem { Label("显示", systemImage: "menubar.rectangle") }.tag("display")
+            PositionsView().tabItem { Label("持仓", systemImage: "list.bullet.rectangle") }.tag("positions")
 
             VStack(alignment: .leading, spacing: 12) {
                 Text("预警规则").font(.title2.weight(.semibold))
@@ -393,7 +354,7 @@ struct MacSettingsView: View {
                 }
             }
             .padding(20)
-            .tabItem { Label("预警", systemImage: "bell") }
+            .tabItem { Label("预警", systemImage: "bell") }.tag("alerts")
 
             VStack(alignment: .leading, spacing: 12) {
                 Text("连接自检").font(.title2.weight(.semibold))
@@ -435,93 +396,17 @@ struct MacSettingsView: View {
                 Spacer()
             }
             .padding(20)
-            .tabItem { Label("自检", systemImage: "stethoscope") }
+            .tabItem { Label("自检", systemImage: "stethoscope") }.tag("diagnostics")
         }
         .frame(width: 620, height: 460)
         .onAppear {
             selection = Set(model.menuSymbols)
             ruleSymbol = model.primarySymbol
-            refreshEntryPriceDrafts()
         }
-        .onChange(of: model.menuSymbols) { _, _ in refreshEntryPriceDrafts() }
     }
 
     private var filteredContracts: [Contract] {
         model.orderedContracts(query: contractQuery)
-    }
-
-    private func entryPriceBinding(for symbol: String) -> Binding<String> {
-        Binding(
-            get: { entryPriceDrafts[symbol] ?? model.entryPrices[symbol]?.priceText ?? "" },
-            set: { entryPriceDrafts[symbol] = $0 }
-        )
-    }
-
-    private func entrySideBinding(for symbol: String) -> Binding<PositionSide> {
-        Binding(
-            get: { entrySideDrafts[symbol] ?? model.entryPrices[symbol]?.positionSide ?? .long },
-            set: { entrySideDrafts[symbol] = $0 }
-        )
-    }
-
-    private func refreshEntryPriceDrafts() {
-        for symbol in model.menuSymbols {
-            entryPriceDrafts[symbol] = model.entryPrices[symbol]?.priceText ?? ""
-            entrySideDrafts[symbol] = model.entryPrices[symbol]?.positionSide ?? .long
-            entryLeverageDrafts[symbol] = String(model.entryPrices[symbol]?.leverage ?? 1)
-        }
-    }
-
-    private func entryLeverageBinding(for symbol: String) -> Binding<String> {
-        Binding(
-            get: { entryLeverageDrafts[symbol] ?? String(model.entryPrices[symbol]?.leverage ?? 1) },
-            set: { entryLeverageDrafts[symbol] = $0 }
-        )
-    }
-
-    private func saveEntryPrice(for symbol: String) {
-        do {
-            try model.setEntryPrice(
-                symbol: symbol,
-                priceText: entryPriceDrafts[symbol] ?? "",
-                positionSide: entrySideDrafts[symbol] ?? .long,
-                leverageText: entryLeverageBinding(for: symbol).wrappedValue
-            )
-            entryPriceDrafts[symbol] = model.entryPrices[symbol]?.priceText
-            entrySideDrafts[symbol] = model.entryPrices[symbol]?.positionSide ?? .long
-            entryLeverageDrafts[symbol] = String(model.entryPrices[symbol]?.leverage ?? 1)
-            entryPriceError = nil
-        } catch {
-            entryPriceError = "\(symbol)：\(error.localizedDescription)"
-        }
-    }
-
-    private func useCurrentPrice(for symbol: String) {
-        do {
-            try model.useCurrentPriceAsEntry(
-                symbol: symbol, positionSide: entrySideDrafts[symbol] ?? .long,
-                leverageText: entryLeverageBinding(for: symbol).wrappedValue
-            )
-            entryPriceDrafts[symbol] = model.entryPrices[symbol]?.priceText
-            entrySideDrafts[symbol] = model.entryPrices[symbol]?.positionSide ?? .long
-            entryLeverageDrafts[symbol] = String(model.entryPrices[symbol]?.leverage ?? 1)
-            entryPriceError = nil
-        } catch {
-            entryPriceError = "\(symbol)：\(error.localizedDescription)"
-        }
-    }
-
-    private func clearEntryPrice(for symbol: String) {
-        model.clearEntryPrice(symbol: symbol)
-        entryPriceDrafts[symbol] = ""
-        entrySideDrafts[symbol] = .long
-        entryLeverageDrafts[symbol] = "1"
-        entryPriceError = nil
-    }
-
-    private func canUseCurrentPrice(for symbol: String) -> Bool {
-        guard let price = model.prices[symbol] else { return false }
-        return !model.isPriceStale(price)
     }
 
     private func saveRule() {
@@ -650,5 +535,104 @@ private struct DiagnosticRow: View {
             Spacer()
         }
         Divider()
+    }
+}
+
+private struct PositionsView: View {
+    @EnvironmentObject private var model: AppModel
+    @State private var editing: PositionRecord?
+    @State private var showingEditor = false
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("持仓记录").font(.title2.weight(.semibold))
+                Spacer()
+                Button("添加持仓") { editing = nil; showingEditor = true }
+            }
+            Text("手动记录参考收益，不含手续费和资金费。删除记录不会平仓。")
+                .font(.caption).foregroundStyle(.secondary)
+            if let error = model.positionError { Text(error).foregroundStyle(AppTheme.fall).font(.caption) }
+            List {
+                ForEach(model.positions) { position in
+                    HStack {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(position.setting.symbol).fontWeight(.semibold)
+                            Text("\(position.setting.positionSide.displayName) · \(position.setting.leverage)倍 · 开仓 \(position.setting.priceText)").font(.caption).foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Button("编辑") { editing = position; showingEditor = true }
+                        Button("删除记录") { model.deletePosition(position.id) }
+                    }.padding(.vertical, 4)
+                }
+            }
+            .overlay { if model.positions.isEmpty { Text("暂无持仓，点击“添加持仓”开始记录。").foregroundStyle(.secondary) } }
+        }.padding(20)
+        .sheet(isPresented: $showingEditor) {
+            PositionEditor(existing: editing).environmentObject(model)
+        }
+    }
+}
+
+private struct PositionEditor: View {
+    @EnvironmentObject private var model: AppModel
+    @Environment(\.dismiss) private var dismiss
+    let existing: PositionRecord?
+    @State private var symbol = ""
+    @State private var query = ""
+    @State private var side = PositionSide.long
+    @State private var price = ""
+    @State private var leverage = "1"
+    @State private var error: String?
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(existing == nil ? "添加持仓" : "编辑持仓").font(.title2.bold())
+            TextField("搜索合约，如 ETH 或 USDC", text: $query).textFieldStyle(.roundedBorder)
+            List(model.orderedContracts(query: query), selection: $symbol) { contract in
+                Text(contract.symbol).tag(contract.symbol)
+            }.frame(height: 140)
+                .overlay {
+                    if model.orderedContracts(query: query).isEmpty {
+                        Text(model.contracts.isEmpty ? "合约列表尚未加载，请稍后重试" : "没有匹配的合约")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+            Text(symbol.isEmpty ? "请选择合约" : symbol).font(.headline)
+            Picker("方向", selection: $side) {
+                Text("多").tag(PositionSide.long)
+                Text("空").tag(PositionSide.short)
+            }.pickerStyle(.segmented)
+            HStack {
+                Text("开仓价")
+                TextField("开仓价", text: $price).textFieldStyle(.roundedBorder)
+                TimelineView(.periodic(from: .now, by: 1)) { context in
+                    Button("使用当前价") {
+                        if let point = model.prices[symbol], !model.isPriceStale(point, now: Date()) { price = point.priceText }
+                    }.disabled(model.prices[symbol].map { model.isPriceStale($0, now: context.date) } ?? true)
+                }
+            }
+            HStack {
+                Text("杠杆")
+                TextField("1", text: $leverage).textFieldStyle(.roundedBorder).frame(width: 70)
+                Text("倍")
+            }
+            if let error { Text(error).font(.caption).foregroundStyle(AppTheme.fall) }
+            HStack {
+                Spacer()
+                Button("取消") { dismiss() }.keyboardShortcut(.cancelAction)
+                Button("保存") {
+                    do {
+                        guard let multiple = Int(leverage.trimmingCharacters(in: .whitespaces)), multiple > 0 else { throw PriceCoreError.invalidLeverage }
+                        let setting = try EntryPriceSetting(symbol: symbol, priceText: price, positionSide: side, leverage: multiple)
+                        try model.savePosition(PositionRecord(id: existing?.id ?? UUID(), setting: setting))
+                        dismiss()
+                    } catch { self.error = error.localizedDescription }
+                }.keyboardShortcut(.defaultAction).disabled(symbol.isEmpty)
+            }
+        }.padding(20).frame(width: 440)
+        .onAppear {
+            if let setting = existing?.setting {
+                symbol = setting.symbol; side = setting.positionSide; price = setting.priceText; leverage = String(setting.leverage)
+            }
+        }
     }
 }

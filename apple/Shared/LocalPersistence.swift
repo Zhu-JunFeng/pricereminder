@@ -94,7 +94,7 @@ enum LocalPersistence {
         try? data.write(to: file(name), options: .atomic)
     }
 
-    private static var directory: URL {
+    static var directory: URL {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appending(path: "PriceReminder", directoryHint: .isDirectory)
     }

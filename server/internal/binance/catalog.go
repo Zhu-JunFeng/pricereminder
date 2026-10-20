@@ -83,7 +83,7 @@ func FetchContracts(ctx context.Context, client *http.Client, restURL string) ([
 	}
 	result := make([]Contract, 0, len(payload.Symbols))
 	for _, item := range payload.Symbols {
-		if item.Status != "TRADING" || item.ContractType != "PERPETUAL" || (item.QuoteAsset != "USDT" && item.QuoteAsset != "USDC") {
+		if item.Status != "TRADING" || (item.ContractType != "PERPETUAL" && item.ContractType != "TRADIFI_PERPETUAL") || (item.QuoteAsset != "USDT" && item.QuoteAsset != "USDC") {
 			continue
 		}
 		var tickSize string
