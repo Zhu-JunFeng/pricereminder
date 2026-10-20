@@ -1,6 +1,14 @@
 import PriceCore
 import SwiftUI
 
+private func compactPrice(_ text: String) -> String {
+    guard text.contains("."), !text.lowercased().contains("e") else { return text }
+    var result = text
+    while result.last == "0" { result.removeLast() }
+    if result.last == "." { result.removeLast() }
+    return result
+}
+
 #if !UI_TEST_HARNESS
 @main
 struct PriceReminderMacApp: App {
@@ -38,7 +46,7 @@ private struct MenuBarLabel: View {
                 }
                 HStack(spacing: 2) {
                     let shortSymbol = symbol.hasSuffix("USDT") ? String(symbol.dropLast(4)) : symbol
-                    Text("\(shortSymbol) \(model.prices[symbol]?.priceText ?? "--")")
+                    Text("\(shortSymbol) \(compactPrice(model.prices[symbol]?.priceText ?? "--"))")
                     PriceTrendArrow(trend: model.consecutivePriceTrends[symbol], size: 7)
                 }
             }
@@ -47,9 +55,17 @@ private struct MenuBarLabel: View {
     }
 }
 
+private struct MenuContentHeightKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
+    }
+}
+
 struct MenuPanel: View {
     @EnvironmentObject private var model: AppModel
     @Environment(\.openSettings) private var openSettings
+    @State private var contentHeight: CGFloat = 0
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -71,8 +87,15 @@ struct MenuPanel: View {
                         Divider()
                     }
                 }
+                .fixedSize(horizontal: false, vertical: true)
+                .background {
+                    GeometryReader { geometry in
+                        Color.clear.preference(key: MenuContentHeightKey.self, value: geometry.size.height)
+                    }
+                }
             }
-            .frame(height: min(380, CGFloat(model.panelSymbols.count * 90 + model.positions.count * 22)))
+            .frame(height: min(380, contentHeight))
+            .onPreferenceChange(MenuContentHeightKey.self) { contentHeight = $0 }
             Divider()
             HStack {
                 Button(model.monitoringEnabled ? "停止监控" : "开始监控") {
@@ -108,7 +131,7 @@ private struct MenuPriceRow: View {
                 Text(symbol).font(.headline)
                 Spacer()
                 HStack(spacing: 5) {
-                    Text(model.prices[symbol]?.priceText ?? "--")
+                    Text(compactPrice(model.prices[symbol]?.priceText ?? "--"))
                         .font(.title3.weight(.semibold)).numericPriceStyle()
                     PriceTrendArrow(trend: model.consecutivePriceTrends[symbol], size: 9)
                 }
@@ -140,7 +163,7 @@ private struct MenuPriceRow: View {
                     ForEach(model.positions.filter { $0.setting.symbol == symbol }) { position in
                         let setting = position.setting
                         HStack(alignment: .firstTextBaseline) {
-                            Text("\(setting.positionSide.displayName) · \(setting.leverage)倍 · 开仓 \(setting.priceText)")
+                            Text("\(setting.positionSide.displayName) · \(setting.leverage)倍 · 开仓 \(compactPrice(setting.priceText))")
                                 .lineLimit(1).truncationMode(.middle).help(setting.priceText)
                             Spacer(minLength: 8)
                             if let point {
@@ -557,7 +580,7 @@ private struct PositionsView: View {
                     HStack {
                         VStack(alignment: .leading, spacing: 4) {
                             Text(position.setting.symbol).fontWeight(.semibold)
-                            Text("\(position.setting.positionSide.displayName) · \(position.setting.leverage)倍 · 开仓 \(position.setting.priceText)").font(.caption).foregroundStyle(.secondary)
+                            Text("\(position.setting.positionSide.displayName) · \(position.setting.leverage)倍 · 开仓 \(compactPrice(position.setting.priceText))").font(.caption).foregroundStyle(.secondary)
                         }
                         Spacer()
                         Button("编辑") { editing = position; showingEditor = true }
