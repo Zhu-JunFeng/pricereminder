@@ -1,0 +1,11 @@
+[Unit]
+Description=Inspect PriceReminder every 10 minutes
+
+[Timer]
+OnCalendar=*:0/10
+Persistent=true
+AccuracySec=1s
+Unit=pricereminder-watchdog.service
+
+[Install]
+WantedBy=timers.target

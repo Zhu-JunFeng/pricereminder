@@ -1,0 +1,21 @@
+[Unit]
+Description=PriceReminder market and proxy inspection
+After=network-online.target mihomo.service pricereminder.service
+
+[Service]
+Type=oneshot
+User=root
+ExecStart=/opt/pricereminder/price-watchdog
+EnvironmentFile=-/etc/pricereminder-watchdog.env
+StateDirectory=pricereminder-watchdog
+StateDirectoryMode=0700
+TimeoutStartSec=8min
+TimeoutStopSec=25s
+KillMode=control-group
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+UMask=0077
+StandardOutput=journal
+StandardError=journal

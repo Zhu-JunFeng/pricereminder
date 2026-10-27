@@ -26,12 +26,13 @@ type Server struct {
 	allowedOrigin string
 	logger        *slog.Logger
 	iosWorker     *iosmonitor.Worker
+	activeSymbols func(context.Context) ([]string, error)
 }
 
 type deviceContextKey struct{}
 
 func New(dataStore *store.Store, catalog *binance.Catalog, hub *stream.Hub, iosWorker *iosmonitor.Worker, allowedOrigin string, logger *slog.Logger) *Server {
-	return &Server{store: dataStore, catalog: catalog, hub: hub, iosWorker: iosWorker, allowedOrigin: allowedOrigin, logger: logger}
+	return &Server{store: dataStore, catalog: catalog, hub: hub, iosWorker: iosWorker, allowedOrigin: allowedOrigin, logger: logger, activeSymbols: dataStore.ActiveSymbols}
 }
 
 func (s *Server) Handler() http.Handler {
@@ -54,11 +55,20 @@ func (s *Server) Handler() http.Handler {
 	return s.recover(mux)
 }
 
-func (s *Server) health(w http.ResponseWriter, _ *http.Request) {
+func (s *Server) health(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+	defer cancel()
+	active, err := s.activeSymbols(ctx)
+	if err != nil {
+		s.logger.Error("health subscription check failed", "error", err)
+		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"status": "error", "error": "subscription_status_unavailable"})
+		return
+	}
 	symbols, latestEventTime := s.hub.Status()
 	writeJSON(w, http.StatusOK, map[string]any{
 		"status": "ok", "contracts": len(s.catalog.All()),
 		"priceSymbols": symbols, "latestEventTime": latestEventTime,
+		"activeSubscriptions": len(active),
 	})
 }
 
