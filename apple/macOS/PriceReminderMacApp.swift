@@ -70,14 +70,12 @@ struct MenuPanel: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("PriceReminder").font(.headline)
-                    Text(model.statusMessage).font(.caption).foregroundStyle(.secondary)
-                }
+                Text(model.statusMessage).font(.caption).foregroundStyle(.secondary)
                 Spacer()
                 Circle().fill(model.monitorState == .live ? AppTheme.primary : Color.orange).frame(width: 8, height: 8)
             }
-            .padding(16)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
             Divider()
             if let error = model.positionError { Text(error).font(.caption).foregroundStyle(AppTheme.fall).padding(12) }
             ScrollView {
