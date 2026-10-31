@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
 	<key>CFBundleDisplayName</key>
-	<string>币价提醒验收</string>
+	<string>PriceReminder验收</string>
 	<key>CFBundleExecutable</key>
 	<string>PriceReminderMacHarness</string>
 	<key>CFBundleIdentifier</key>

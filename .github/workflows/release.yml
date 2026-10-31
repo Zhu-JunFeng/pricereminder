@@ -106,12 +106,12 @@ jobs:
       - name: Package macOS DMG
         shell: bash
         run: |
-          app="apple/build/DerivedData-macOS/Build/Products/Release/PriceReminderMac.app"
+          app="apple/build/DerivedData-macOS/Build/Products/Release/PriceReminder.app"
           codesign --force --deep --sign - "$app"
           mkdir -p dist/dmg
-          cp -R "$app" "dist/dmg/币价提醒.app"
+          cp -R "$app" "dist/dmg/PriceReminder.app"
           ln -s /Applications dist/dmg/Applications
-          hdiutil create -volname "币价提醒" -srcfolder dist/dmg -ov -format UDZO "PriceReminder-macOS-${{ needs.version.outputs.version }}.dmg"
+          hdiutil create -volname "PriceReminder" -srcfolder dist/dmg -ov -format UDZO "PriceReminder-macOS-${{ needs.version.outputs.version }}.dmg"
       - uses: actions/upload-artifact@v4
         with:
           name: macos-package

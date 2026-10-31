@@ -17,7 +17,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
         _ = mainForm.Handle;
         monitorItem = new ToolStripMenuItem("停止监控", null, (_, _) => ToggleMonitoring());
         var menu = new ContextMenuStrip();
-        menu.Items.Add(new ToolStripMenuItem("打开币价提醒", null, (_, _) => ShowWindow()) { Font = new Font("Segoe UI", 9, FontStyle.Bold) });
+        menu.Items.Add(new ToolStripMenuItem("打开PriceReminder", null, (_, _) => ShowWindow()) { Font = new Font("Segoe UI", 9, FontStyle.Bold) });
         menu.Items.Add(priceSeparator);
         menu.Items.Add(monitorItem);
         menu.Items.Add(new ToolStripMenuItem("退出", null, (_, _) => ExitApplication()));
@@ -25,7 +25,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
         trayIcon = new NotifyIcon
         {
             Icon = BrandIcon.Create(),
-            Text = "币价提醒 · 正在连接",
+            Text = "PriceReminder · 正在连接",
             Visible = true,
             ContextMenuStrip = menu,
         };
@@ -40,12 +40,12 @@ internal sealed class TrayApplicationContext : ApplicationContext
             if (exiting) return;
             eventArgs.Cancel = true;
             mainForm.Hide();
-            trayIcon.ShowBalloonTip(2500, "币价提醒仍在运行", "价格监控已收起到 Windows 通知区域。", ToolTipIcon.Info);
+            trayIcon.ShowBalloonTip(2500, "PriceReminder仍在运行", "价格监控已收起到 Windows 通知区域。", ToolTipIcon.Info);
         };
         monitor.StateChanged += snapshot => Ui(() => ApplySnapshot(snapshot));
         monitor.Triggered += triggers => Ui(() => ShowTriggers(triggers));
         mainForm.TestNotificationRequested += () => Ui(() =>
-            trayIcon.ShowBalloonTip(5000, "币价提醒测试", "系统通知可正常接收", ToolTipIcon.Info));
+            trayIcon.ShowBalloonTip(5000, "PriceReminder测试", "系统通知可正常接收", ToolTipIcon.Info));
 
         monitor.Start();
         _ = LoadContractsAsync();

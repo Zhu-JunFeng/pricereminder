@@ -1,4 +1,4 @@
-# 币价提醒 PriceReminder
+# PriceReminder
 
 [![Latest Release](https://img.shields.io/github/v/release/Zhu-JunFeng/pricereminder?display_name=tag&sort=semver)](https://github.com/Zhu-JunFeng/pricereminder/releases/latest)
 [![Build and Release](https://github.com/Zhu-JunFeng/pricereminder/actions/workflows/release.yml/badge.svg)](https://github.com/Zhu-JunFeng/pricereminder/actions/workflows/release.yml)

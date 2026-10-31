@@ -16,6 +16,7 @@
     <InvariantGlobalization>false</InvariantGlobalization>
   </PropertyGroup>
   <ItemGroup>
+    <EmbeddedResource Include="PriceReminder.ico" LogicalName="PriceReminder.Brand.ico" />
     <Compile Remove="PriceReminder.CoreChecks/**" />
     <None Remove="PriceReminder.CoreChecks/**" />
   </ItemGroup>

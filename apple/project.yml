@@ -38,7 +38,10 @@ targets:
     info:
       path: iOS/Info.plist
       properties:
-        CFBundleDisplayName: 币价提醒
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        CFBundleDisplayName: PriceReminder
+        CFBundleName: PriceReminder
         UILaunchScreen: {}
         NSSupportsLiveActivities: true
         NSSupportsLiveActivitiesFrequentUpdates: true
@@ -59,10 +62,13 @@ targets:
     info:
       path: LiveActivity/Info.plist
       properties:
-        CFBundleDisplayName: 币价提醒实时活动
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        CFBundleDisplayName: PriceReminder实时活动
         NSExtension:
           NSExtensionPointIdentifier: com.apple.widgetkit-extension
   PriceReminderMac:
+    productName: PriceReminder
     type: application
     platform: macOS
     sources:
@@ -72,13 +78,18 @@ targets:
       - package: PriceCore
     settings:
       base:
+        PRODUCT_NAME: PriceReminder
+        EXECUTABLE_NAME: PriceReminderMac
         PRODUCT_BUNDLE_IDENTIFIER: world.zcn.pricereminder.mac
         CODE_SIGN_ENTITLEMENTS: macOS/PriceReminderMac.entitlements
         PRICE_REMINDER_SERVER_URL: "https://keyflow.zcn.world/price-reminder"
     info:
       path: macOS/Info.plist
       properties:
-        CFBundleDisplayName: 币价提醒
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        CFBundleDisplayName: PriceReminder
+        CFBundleName: PriceReminder
         LSUIElement: true
         PriceReminderServerURL: $(PRICE_REMINDER_SERVER_URL)
 schemes:

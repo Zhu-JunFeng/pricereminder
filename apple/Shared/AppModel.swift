@@ -497,7 +497,7 @@ final class AppModel: ObservableObject {
 
     func startLiveActivity() async {
         guard ActivityAuthorizationInfo().areActivitiesEnabled else {
-            liveActivityStatusMessage = "系统未允许实时活动，请在系统设置中允许“币价提醒”的实时活动后重试。"
+            liveActivityStatusMessage = "系统未允许实时活动，请在系统设置中允许“PriceReminder”的实时活动后重试。"
             return
         }
         guard activity == nil else {
@@ -978,7 +978,7 @@ final class AppModel: ObservableObject {
     func sendTestNotification() async -> Bool {
         await refreshNotificationAuthorization()
         guard notificationsAllowed else { return false }
-        return await sendHealthNotification(title: "币价提醒测试", body: "系统通知可正常接收")
+        return await sendHealthNotification(title: "PriceReminder测试", body: "系统通知可正常接收")
     }
 
     var connectionSourceLabel: String {

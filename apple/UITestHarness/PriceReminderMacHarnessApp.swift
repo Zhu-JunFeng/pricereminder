@@ -5,7 +5,7 @@ struct PriceReminderMacHarnessApp: App {
     @StateObject private var model = AppModel()
 
     var body: some Scene {
-        WindowGroup("币价提醒验收") {
+        WindowGroup("PriceReminder验收") {
             MenuPanel()
                 .environmentObject(model)
                 .task {

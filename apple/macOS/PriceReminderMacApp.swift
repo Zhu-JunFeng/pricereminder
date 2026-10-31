@@ -71,7 +71,7 @@ struct MenuPanel: View {
         VStack(alignment: .leading, spacing: 0) {
             HStack {
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("币价提醒").font(.headline)
+                    Text("PriceReminder").font(.headline)
                     Text(model.statusMessage).font(.caption).foregroundStyle(.secondary)
                 }
                 Spacer()

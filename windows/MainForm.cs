@@ -58,7 +58,7 @@ internal sealed class MainForm : Form
     {
         this.store = store;
         this.monitor = monitor;
-        Text = "币价提醒";
+        Text = "PriceReminder";
         Icon = BrandIcon.Create();
         StartPosition = FormStartPosition.CenterScreen;
         MinimumSize = new Size(840, 620);

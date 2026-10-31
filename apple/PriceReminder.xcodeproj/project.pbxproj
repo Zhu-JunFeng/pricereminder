@@ -72,7 +72,7 @@
 		44B52C351F8A2CD37521868A /* RootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootView.swift; sourceTree = "<group>"; };
 		4D85A9280F4CE0B38BBF77C8 /* LiveActivity.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = LiveActivity.entitlements; sourceTree = "<group>"; };
 		6E5F2A2CB80CA4F7E9608919 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
-		756EF9E9CD42F04B114B4726 /* PriceReminderMac.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = PriceReminderMac.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		7F8D24FB33CD2AF3DFD19770 /* PriceReminder.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = PriceReminder.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		7FC178CC7C61F0285EB1ADBC /* AppModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModel.swift; sourceTree = "<group>"; };
 		8F1C5C500840148654146744 /* ServerConnectionService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerConnectionService.swift; sourceTree = "<group>"; };
 		955EDB42615CD4178E7D2725 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
@@ -112,9 +112,9 @@
 		1B817AA005E599E589D446E4 /* Products */ = {
 			isa = PBXGroup;
 			children = (
+				7F8D24FB33CD2AF3DFD19770 /* PriceReminder.app */,
 				F6D8663169CFEEF5607428AA /* PriceReminderiOS.app */,
 				BEA143AFA717AFA289712A42 /* PriceReminderLiveActivity.appex */,
-				756EF9E9CD42F04B114B4726 /* PriceReminderMac.app */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -248,7 +248,7 @@
 				5C49F97E28440CC1256DD74D /* PriceCore */,
 			);
 			productName = PriceReminderMac;
-			productReference = 756EF9E9CD42F04B114B4726 /* PriceReminderMac.app */;
+			productReference = 7F8D24FB33CD2AF3DFD19770 /* PriceReminder.app */;
 			productType = "com.apple.product-type.application";
 		};
 /* End PBXNativeTarget section */
@@ -374,6 +374,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = macOS/PriceReminderMac.entitlements;
 				COMBINE_HIDPI_IMAGES = YES;
+				EXECUTABLE_NAME = PriceReminderMac;
 				INFOPLIST_FILE = macOS/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -381,6 +382,7 @@
 				);
 				PRICE_REMINDER_SERVER_URL = "https://keyflow.zcn.world/price-reminder";
 				PRODUCT_BUNDLE_IDENTIFIER = world.zcn.pricereminder.mac;
+				PRODUCT_NAME = PriceReminder;
 				SDKROOT = macosx;
 			};
 			name = Debug;
@@ -514,6 +516,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = macOS/PriceReminderMac.entitlements;
 				COMBINE_HIDPI_IMAGES = YES;
+				EXECUTABLE_NAME = PriceReminderMac;
 				INFOPLIST_FILE = macOS/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -521,6 +524,7 @@
 				);
 				PRICE_REMINDER_SERVER_URL = "https://keyflow.zcn.world/price-reminder";
 				PRODUCT_BUNDLE_IDENTIFIER = world.zcn.pricereminder.mac;
+				PRODUCT_NAME = PriceReminder;
 				SDKROOT = macosx;
 			};
 			name = Release;
