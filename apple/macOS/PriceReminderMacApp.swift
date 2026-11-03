@@ -231,6 +231,11 @@ struct MacSettingsView: View {
     @State private var targetDirection: TargetDirection = .above
     @State private var targetPrice = ""
     @State private var ruleError: String?
+    @State private var ruleSuccess = ""
+    @State private var showingRuleSuccess = false
+    @State private var pendingDeletion: (id: UUID, market: Bool, description: String)?
+    @State private var showingDeleteConfirmation = false
+    @State private var deletionSuccess: String?
     @State private var testResult: String?
     @State private var showingRuleContracts = false
     @State private var editingRuleID: UUID?
@@ -333,6 +338,10 @@ struct MacSettingsView: View {
                 if let ruleError {
                     Text(ruleError).font(.caption).foregroundStyle(AppTheme.fall)
                 }
+                if let deletionSuccess {
+                    Label(deletionSuccess, systemImage: "checkmark.circle.fill")
+                        .font(.caption).foregroundStyle(AppTheme.rise)
+                }
 
                 if model.rules.isEmpty && model.marketRules.isEmpty {
                     ContentUnavailableView("还没有预警规则", systemImage: "bell.slash", description: Text("可添加单合约、全市场或目标价格提醒。"))
@@ -356,7 +365,11 @@ struct MacSettingsView: View {
                             }
                             .buttonStyle(.borderless)
                             .help("编辑提醒")
-                            Button(role: .destructive) { model.deleteRule(id: rule.id) } label: {
+                            Button(role: .destructive) {
+                                deletionSuccess = nil
+                                pendingDeletion = (rule.id, false, "\(model.displaySymbol(rule.symbol)) · \(ruleDescription(rule))")
+                                showingDeleteConfirmation = true
+                            } label: {
                                 Image(systemName: "trash")
                             }
                             .buttonStyle(.borderless)
@@ -376,7 +389,11 @@ struct MacSettingsView: View {
                                 )).labelsHidden()
                                 Button { beginEditing(rule) } label: { Image(systemName: "pencil") }
                                     .buttonStyle(.borderless)
-                                Button(role: .destructive) { model.deleteMarketRule(id: rule.id) } label: {
+                                Button(role: .destructive) {
+                                    deletionSuccess = nil
+                                    pendingDeletion = (rule.id, true, "全市场 · \(rule.windowMinutes)分钟 · \(rule.thresholdText)%")
+                                    showingDeleteConfirmation = true
+                                } label: {
                                     Image(systemName: "trash")
                                 }.buttonStyle(.borderless)
                             }
@@ -430,6 +447,17 @@ struct MacSettingsView: View {
             .tabItem { Label("自检", systemImage: "stethoscope") }.tag("diagnostics")
         }
         .frame(width: 620, height: 460)
+        .alert("删除这条预警？", isPresented: $showingDeleteConfirmation) {
+            Button("取消", role: .cancel) { pendingDeletion = nil }
+            Button("删除预警", role: .destructive) { confirmRuleDeletion() }
+        } message: {
+            Text("\(pendingDeletion?.description ?? "")\n删除后将不再按此规则提醒。")
+        }
+        .alert("预警设置成功", isPresented: $showingRuleSuccess) {
+            Button("知道了", role: .cancel) {}
+        } message: {
+            Text(ruleSuccess)
+        }
         .onAppear {
             selection = Set(model.menuSymbols)
             ruleSymbol = model.primarySymbol
@@ -440,7 +468,27 @@ struct MacSettingsView: View {
         model.orderedContracts(query: contractQuery)
     }
 
+    private func confirmRuleDeletion() {
+        guard let pending = pendingDeletion else { return }
+        if pending.market {
+            model.deleteMarketRule(id: pending.id)
+        } else {
+            model.deleteRule(id: pending.id)
+        }
+        if editingRuleID == pending.id || editingMarketRuleID == pending.id { cancelEditing() }
+        ruleError = nil
+        deletionSuccess = "预警已删除：\(pending.description)"
+        pendingDeletion = nil
+    }
+
     private func saveRule() {
+        deletionSuccess = nil
+        showingRuleSuccess = false
+        let editing = editingRuleID != nil || editingMarketRuleID != nil
+        let name = ruleKind == .marketPercentage ? "全市场" : model.displaySymbol(ruleSymbol)
+        let detail = ruleKind == .target
+            ? "\(targetDirection == .above ? "达到或高于" : "达到或低于") \(targetPrice)"
+            : "\(ruleWindow)分钟 · 涨跌幅 \(ruleThreshold)%"
         do {
             if let editingRuleID {
                 try model.updateRule(
@@ -462,6 +510,8 @@ struct MacSettingsView: View {
                 try model.addTargetRule(symbol: ruleSymbol, direction: targetDirection, targetPrice: targetPrice)
             }
             ruleError = nil
+            ruleSuccess = "\(editing ? "预警已更新" : "预警已添加")：\(name)\n\(detail)"
+            showingRuleSuccess = true
         } catch {
             ruleError = error.localizedDescription
         }
