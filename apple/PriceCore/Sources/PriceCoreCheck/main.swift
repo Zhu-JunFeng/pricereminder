@@ -7,6 +7,21 @@ func expect(_ condition: @autoclosure () -> Bool, _ message: String) throws {
     if !condition() { throw CheckError.failed(message) }
 }
 
+func goldQuoteChecks() throws {
+    let json = #"{"price":"847","previousClose":"836.08","eventTime":1793675585000,"receivedAt":1793675609000,"state":"stale","source":"新浪财经"}"#
+    let quote = try JSONDecoder().decode(GoldQuote.self, from: Data(json.utf8))
+    try expect(!quote.eligible, "stale gold must not alert")
+    try expect(quote.eventTime == 1793675585000, "source timestamp must survive decoding")
+    try expect(quote.change != nil, "gold daily change uses previous close")
+    try expect(quote.quoteTimeText == "11:13:05", "gold quote time uses Beijing HH:mm:ss independent of device locale")
+    var buffer = PriceBuffer()
+    buffer.add(try PricePoint(symbol: "BTCUSDT", priceText: "100", eventTime: 0))
+    buffer.add(try PricePoint(symbol: GoldQuote.symbol, priceText: "847", eventTime: 0))
+    buffer.remove(symbol: GoldQuote.symbol)
+    try expect(buffer.latest(symbol: GoldQuote.symbol) == nil && buffer.latest(symbol: "BTCUSDT") != nil, "reset gold must preserve crypto")
+    try expect(ContractOrdering.ordered([GoldQuote.contract], recentSymbols: [], query: "黄金").count == 1, "Chinese gold search")
+}
+
 func equalThresholdTriggersAndRearms() throws {
     var buffer = PriceBuffer()
     var rule = try AlertRule(symbol: "BTCUSDT", windowMinutes: 1, thresholdText: "5")
@@ -292,6 +307,7 @@ func positionPersistenceChecks() throws {
 }
 
 do {
+    try goldQuoteChecks()
     try positionPersistenceChecks()
     try dailyBaselineUsesBeijingMidnight()
     try equalThresholdTriggersAndRearms()

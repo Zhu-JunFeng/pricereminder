@@ -15,7 +15,7 @@ struct MarketView: View {
                     HStack {
                         VStack(alignment: .leading, spacing: 4) {
                             Text("主合约").font(.caption).foregroundStyle(.secondary)
-                            Text(model.primarySymbol).font(.headline).foregroundStyle(.primary)
+                            Text(model.displaySymbol(model.primarySymbol)).font(.headline).foregroundStyle(.primary)
                         }
                         Spacer()
                         Image(systemName: "chevron.up.chevron.down").foregroundStyle(.secondary)
@@ -26,19 +26,28 @@ struct MarketView: View {
                 .buttonStyle(.plain)
                 .padding(.bottom, 28)
 
-                Text(model.primarySymbol)
+                Text(model.displaySymbol(model.primarySymbol))
                     .font(.subheadline.weight(.medium)).foregroundStyle(.secondary)
                 Text(price?.priceText ?? "--")
                     .font(.system(size: 42, weight: .semibold, design: .rounded))
                     .numericPriceStyle()
                     .contentTransition(.numericText())
-                Text(price.map { "币安最新成交价 · \(Date(timeIntervalSince1970: Double($0.eventTime) / 1000).formatted(date: .omitted, time: .standard))" } ?? "等待第一条价格")
+                if model.primarySymbol != GoldQuote.symbol {
+                Text(price.map { "报价时间 · \(Date(timeIntervalSince1970: Double($0.eventTime) / 1000).formatted(date: .omitted, time: .standard))" } ?? "等待第一条价格")
                     .font(.caption).foregroundStyle(.secondary).padding(.top, 3)
 
+                }
+                if model.primarySymbol == GoldQuote.symbol {
+                    Text("元/克 · 仅前台提醒").font(.caption)
+                    Text("新浪财经 · 报价时间 \(model.goldQuote?.quoteTimeText ?? "--")").font(.caption).foregroundStyle(.secondary)
+                    Text(model.goldStatus).font(.caption).foregroundStyle(.secondary)
+                    Text("日涨幅：\(model.goldQuote?.change?.percentageText ?? "--")（相对昨收）").font(.caption)
+                } else {
                 EntryPriceSummary(symbol: model.primarySymbol) {
                     showingEntryPriceEditor = true
                 }
                 .padding(.top, 16)
+                }
 
                 Divider().padding(.vertical, 24)
                 HStack(alignment: .center, spacing: 14) {
@@ -63,6 +72,7 @@ struct MarketView: View {
                         .font(.caption).foregroundStyle(.secondary)
                     HStack {
                         Button("显示实时价格") { Task { await model.startLiveActivity() } }
+                            .disabled(model.primarySymbol == GoldQuote.symbol)
                             .buttonStyle(.borderedProminent)
                         Button("结束") { Task { await model.stopLiveActivity() } }
                             .buttonStyle(.bordered)
@@ -273,7 +283,7 @@ struct ContractPickerView: View {
                     } label: {
                         HStack {
                             VStack(alignment: .leading) {
-                                Text(contract.symbol).foregroundStyle(.primary)
+                                Text(model.displaySymbol(contract.symbol)).foregroundStyle(.primary)
                                 Text("\(contract.baseAsset) / \(contract.quoteAsset)").font(.caption).foregroundStyle(.secondary)
                             }
                             Spacer()

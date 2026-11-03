@@ -22,7 +22,14 @@ class ApiClient(
     val json = Json { ignoreUnknownKeys = true }
 
     suspend fun contracts(): List<ContractDto> = runCatching { directContracts() }
-        .getOrElse { serverContracts() }
+        .getOrElse { serverContracts() }.plus(GoldQuote.contract)
+
+    suspend fun goldQuote(): GoldQuote = withContext(Dispatchers.IO) {
+        http.newCall(Request.Builder().url("$serverBaseUrl/v1/gold/quote").build()).execute().use {
+            check(it.isSuccessful) { "黄金行情暂不可用" }
+            json.decodeFromString<GoldQuote>(it.body?.string().orEmpty())
+        }
+    }
 
     suspend fun binanceContracts(): List<ContractDto> = directContracts()
 

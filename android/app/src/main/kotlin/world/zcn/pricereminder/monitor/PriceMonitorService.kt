@@ -22,6 +22,7 @@ import world.zcn.pricereminder.core.PriceBuffer
 import world.zcn.pricereminder.core.PricePoint
 import world.zcn.pricereminder.core.RuleEngine
 import world.zcn.pricereminder.core.TargetDirection
+import world.zcn.pricereminder.data.GoldQuote
 import world.zcn.pricereminder.data.CombinedTradeDto
 import world.zcn.pricereminder.data.RelayMessage
 import world.zcn.pricereminder.data.MarketMiniTickerDto
@@ -65,6 +66,7 @@ class PriceMonitorService : Service() {
         )
         scope.launch { watchdog() }
         scope.launch { flushPrices() }
+        scope.launch { goldLoop() }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -89,6 +91,37 @@ class PriceMonitorService : Service() {
             )
         }
         super.onDestroy()
+    }
+
+    private suspend fun goldLoop() {
+        var last = 0L
+        var initialize = true
+        buffer.remove(GoldQuote.SYMBOL)
+        while (true) {
+            try {
+                val wanted = container.localStore.primarySymbol == GoldQuote.SYMBOL || container.localStore.rules().any { it.enabled && it.symbol == GoldQuote.SYMBOL }
+                if (!wanted) { initialize = true; buffer.remove(GoldQuote.SYMBOL) }
+                else {
+                    val quote = container.apiClient.goldQuote()
+                    val point = PricePoint(GoldQuote.SYMBOL,quote.price,quote.eventTime)
+                    MonitorBus.update { it.copy(prices = it.prices + (point.symbol to LivePrice(point.symbol,point.priceText,point.eventTime)),goldChange = quote.dailyChange,
+                        goldStatus = if (quote.eligible) "实时价格" else when (quote.state) { "closed" -> "黄金休市"; "calendar_unknown" -> "交易日历待更新，提醒已暂停"; else -> "报价已陈旧，提醒已暂停" }) }
+                    if (subscribedSymbols.isEmpty()) MonitorBus.update { it.copy(connected = quote.eligible, warmingUp = false, message = it.goldStatus, source = "黄金服务端") }
+                    if (!quote.eligible) { initialize = true; buffer.remove(point.symbol) }
+                    else if (point.eventTime > last) {
+                        buffer.add(point)
+                        refreshRules()
+                        if (initialize) {
+                            activeRules.values.filter { it.symbol == point.symbol }.forEach { RuleEngine.initialize(it,point,buffer) }
+                            initialize = false
+                        } else evaluate(point)
+                        last = point.eventTime
+                    }
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e }
+            catch (e: Exception) { initialize = true; buffer.remove(GoldQuote.SYMBOL); MonitorBus.update { it.copy(goldStatus = "黄金行情连接失败，提醒已暂停") } }
+            delay(5.seconds)
+        }
     }
 
     private fun connectMarketIfNeeded() {
@@ -195,8 +228,9 @@ class PriceMonitorService : Service() {
         scope.launch {
             runCatching {
                 refreshRules()
-                val symbols = (activeRules.values.filter { it.enabled }.map { it.symbol } + container.localStore.primarySymbol).distinct().take(50)
+                val symbols = (activeRules.values.filter { it.enabled }.map { it.symbol } + container.localStore.primarySymbol).distinct().filter { it != GoldQuote.SYMBOL }.take(50)
                 subscribedSymbols = symbols.toSet()
+                if (symbols.isEmpty()) return@launch
                 MonitorBus.update { it.copy(subscribedCount = symbols.size) }
                 val request = if (source == ConnectionSource.DIRECT) {
                     container.apiClient.streamRequest(symbols)
@@ -429,11 +463,12 @@ class PriceMonitorService : Service() {
             refreshRules()
             connectMarketIfNeeded()
             val desiredSymbols = (activeRules.values.filter { it.enabled }.map { it.symbol } + container.localStore.primarySymbol)
-                .distinct().take(50).toSet()
+                .distinct().filter { it != GoldQuote.SYMBOL }.take(50).toSet()
             if (desiredSymbols != subscribedSymbols) {
                 connect()
                 continue
             }
+            if (desiredSymbols.isEmpty()) continue
             val now = System.currentTimeMillis()
             if (connectionSource == ConnectionSource.SERVER && serverConnectedAt > 0 && now - serverConnectedAt >= 5 * 60_000L) {
                 serverConnectedAt = now
@@ -445,7 +480,7 @@ class PriceMonitorService : Service() {
             MonitorBus.update { state ->
                 state.copy(
                     staleSymbols = state.prices.values
-                        .filter { now - it.eventTime >= 30.seconds.inWholeMilliseconds }
+                        .filter { now - it.eventTime >= (if (it.symbol == GoldQuote.SYMBOL) 120_000 else 30_000) }
                         .mapTo(mutableSetOf()) { it.symbol },
                 )
             }

@@ -110,7 +110,7 @@ internal sealed class MainForm : Form
         sourceLabel.BackColor = snapshot.Connected ? PrimarySoft : WarningSoft;
         monitorButton.Text = snapshot.Running ? "停止监控" : "开始监控";
         var symbol = store.State.PrimarySymbol;
-        symbolLabel.Text = symbol;
+        symbolLabel.Text = GoldQuote.Name(symbol);
         if (snapshot.Prices.TryGetValue(symbol, out var point))
         {
             priceLabel.Text = point.PriceText;
@@ -123,7 +123,15 @@ internal sealed class MainForm : Form
             priceLabel.Text = "--";
             updatedLabel.Text = "等待第一条价格";
         }
+        if (symbol == GoldQuote.Symbol) {
+            priceLabel.Text += " 元/克";
+            updatedLabel.Text = snapshot.Prices.TryGetValue(symbol, out var goldPoint)
+                ? $"新浪财经 · 报价时间 {DateTimeOffset.FromUnixTimeMilliseconds(goldPoint.EventTime).ToOffset(TimeSpan.FromHours(8)):HH:mm:ss}"
+                : "等待黄金报价";
+        }
         RefreshEntryPrice(snapshot);
+        entryPriceEditButton.Enabled = symbol != GoldQuote.Symbol;
+        if (symbol == GoldQuote.Symbol) entryPriceLabel.Text = $"日涨幅 {monitor.Gold?.DailyChange ?? "--"}（相对昨收）· {monitor.GoldStatus}";
         var lastReceived = snapshot.LastReceivedAt?.ToLocalTime().ToString("HH:mm:ss", CultureInfo.InvariantCulture) ?? "尚未收到";
         var lastMarketReceived = snapshot.LastMarketReceivedAt?.ToLocalTime().ToString("HH:mm:ss", CultureInfo.InvariantCulture) ?? "尚未收到";
         var latestEvent = snapshot.Prices.Values.Select(item => item.EventTime).DefaultIfEmpty(0).Max();
@@ -309,7 +317,7 @@ internal sealed class MainForm : Form
         ruleKind.SelectedIndexChanged += (_, _) => UpdateRuleFields();
         ruleSymbol.SelectionChangeCommitted += (_, _) =>
         {
-            var symbol = ruleSymbol.Text.Trim().ToUpperInvariant();
+            var symbol = GoldQuote.Normalize(ruleSymbol.Text);
             if (contracts.Any(item => item.Symbol == symbol)) store.RecordRecentSymbol(symbol);
         };
         ruleSymbol.DropDown += (_, _) => RefreshContractCombos();
@@ -422,7 +430,7 @@ internal sealed class MainForm : Form
     private void SelectPrimary()
     {
         if (updatingContractCombos) return;
-        var symbol = primarySymbol.Text.Trim().ToUpperInvariant();
+        var symbol = GoldQuote.Normalize(primarySymbol.Text);
         if (!contracts.Any(item => item.Symbol == symbol)) return;
         store.State.PrimarySymbol = symbol;
         store.RecordRecentSymbol(symbol);
@@ -601,7 +609,7 @@ internal sealed class MainForm : Form
 
     private void SaveRule()
     {
-        var symbol = ruleSymbol.Text.Trim().ToUpperInvariant();
+        var symbol = GoldQuote.Normalize(ruleSymbol.Text);
         var isMarket = ruleKind.Text == "全市场";
         if (!isMarket && !contracts.Any(item => item.Symbol == symbol))
         {
@@ -891,7 +899,7 @@ internal sealed class MainForm : Form
         updatingContractCombos = true;
         var primary = primarySymbol.Text.Length == 0 ? store.State.PrimarySymbol : primarySymbol.Text;
         var rule = ruleSymbol.Text.Length == 0 ? store.State.PrimarySymbol : ruleSymbol.Text;
-        var symbols = ContractOrdering.Ordered(contracts, store.State.RecentSymbols).Select(item => item.Symbol).ToArray();
+        var symbols = ContractOrdering.Ordered(contracts, store.State.RecentSymbols).Select(item => GoldQuote.Name(item.Symbol)).ToArray();
         ConfigureContractCombo(primarySymbol, symbols, primary);
         ConfigureContractCombo(ruleSymbol, symbols, rule);
         updatingContractCombos = false;
@@ -904,7 +912,7 @@ internal sealed class MainForm : Form
         combo.Items.AddRange(symbols);
         combo.AutoCompleteMode = AutoCompleteMode.SuggestAppend;
         combo.AutoCompleteSource = AutoCompleteSource.ListItems;
-        combo.Text = selected;
+        combo.Text = GoldQuote.Name(selected);
         combo.EndUpdate();
     }
 

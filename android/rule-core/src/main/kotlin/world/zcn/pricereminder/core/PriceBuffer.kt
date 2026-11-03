@@ -4,6 +4,9 @@ class PriceBuffer {
     private val pointsBySymbol = mutableMapOf<String, MutableList<PricePoint>>()
 
     @Synchronized
+    fun remove(symbol: String) { pointsBySymbol.remove(symbol) }
+
+    @Synchronized
     fun add(point: PricePoint): Boolean {
         val points = pointsBySymbol.getOrPut(point.symbol) { mutableListOf() }
         points.lastOrNull()?.let { last ->

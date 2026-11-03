@@ -7,6 +7,7 @@
     <RootNamespace>PriceReminder.Windows</RootNamespace>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="../GoldQuote.cs" Link="GoldQuote.cs" />
     <Compile Include="../Models.cs" Link="Models.cs" />
     <Compile Include="../MarketScanner.cs" Link="MarketScanner.cs" />
     <Compile Include="../RuleEngine.cs" Link="RuleEngine.cs" />

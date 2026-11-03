@@ -25,16 +25,23 @@ internal sealed class ApiClient
     {
         try
         {
-            return await DirectContractsAsync(cancellationToken);
+            return (await DirectContractsAsync(cancellationToken)).Append(GoldQuote.Contract).ToArray();
         }
         catch
         {
-            return await ServerContractsAsync(cancellationToken);
+            return (await ServerContractsAsync(cancellationToken)).Append(GoldQuote.Contract).ToArray();
         }
     }
 
     public async Task<IReadOnlyList<Contract>> BinancePerpetualContractsAsync(CancellationToken cancellationToken) =>
         (await DirectContractsAsync(cancellationToken)).Where(item => (item.QuoteAsset == "USDT" || item.QuoteAsset == "USDC")).ToArray();
+
+    public async Task<GoldQuote> GoldQuoteAsync(CancellationToken token) {
+        using var response = await http.GetAsync(ServerBaseUrl + "/v1/gold/quote", token);
+        response.EnsureSuccessStatusCode();
+        return JsonSerializer.Deserialize<GoldQuote>(await response.Content.ReadAsStringAsync(token), JsonOptions)
+            ?? throw new InvalidOperationException("黄金报价无效");
+    }
 
     public Uri AllMarketUri() => new(BinanceAllMarketUrl);
 

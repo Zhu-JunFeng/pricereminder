@@ -15,6 +15,7 @@ import (
 	"pricereminder/server/internal/binance"
 	"pricereminder/server/internal/config"
 	"pricereminder/server/internal/domain"
+	"pricereminder/server/internal/gold"
 	"pricereminder/server/internal/iosmonitor"
 	"pricereminder/server/internal/pricebuffer"
 	"pricereminder/server/internal/store"
@@ -68,9 +69,14 @@ func main() {
 	go binance.RunPriceStream(ctx, configuration.BinanceWSURL, dataStore, catalog, priceFanout{hub: hub, iosWorker: iosWorker}, logger)
 	go binance.RunMarketStream(ctx, configuration.BinanceWSURL, catalog, marketFanout{iosWorker}, iosWorker.MarketEnabled, logger)
 
+	goldService := &gold.Service{}
+	go goldService.Run(ctx, logger)
+	handler := http.NewServeMux()
+	handler.Handle("GET /v1/gold/quote", goldService)
+	handler.Handle("/", api.New(dataStore, catalog, hub, iosWorker, configuration.AllowedOrigin, logger).Handler())
 	server := &http.Server{
 		Addr:              configuration.ListenAddr,
-		Handler:           api.New(dataStore, catalog, hub, iosWorker, configuration.AllowedOrigin, logger).Handler(),
+		Handler:           handler,
 		ReadHeaderTimeout: 5 * time.Second,
 		IdleTimeout:       75 * time.Second,
 	}

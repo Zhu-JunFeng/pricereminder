@@ -19,6 +19,9 @@ internal sealed class MonitorService : IDisposable
     private Task? monitorTask;
     private Task? processorTask;
     private Task? marketTask;
+    private Task? goldTask;
+    public GoldQuote? Gold { get; private set; }
+    public string GoldStatus { get; private set; } = "等待黄金报价";
     private HashSet<string> staleSymbols = new(StringComparer.OrdinalIgnoreCase);
     private ConnectionSource source = ConnectionSource.Direct;
     private string message = "监控未启动";
@@ -60,6 +63,7 @@ internal sealed class MonitorService : IDisposable
         monitorTask = Task.Run(() => MonitorLoopAsync(serviceCancellation.Token));
         processorTask = Task.Run(() => ProcessPricesAsync(serviceCancellation.Token));
         marketTask = Task.Run(() => MarketLoopAsync(serviceCancellation.Token));
+        goldTask = Task.Run(() => GoldLoopAsync(serviceCancellation.Token));
     }
 
     public void Stop()
@@ -161,6 +165,37 @@ internal sealed class MonitorService : IDisposable
         }
     }
 
+    private async Task GoldLoopAsync(CancellationToken token) {
+        long last = 0;
+        bool initialize = true;
+        buffer.Remove(GoldQuote.Symbol);
+        while (!token.IsCancellationRequested) {
+            try {
+                if (!DesiredSymbols().Contains(GoldQuote.Symbol)) { initialize = true; buffer.Remove(GoldQuote.Symbol); }
+                else {
+                    var quote = await api.GoldQuoteAsync(token);
+                    Gold = quote;
+                    if (DesiredSymbols().All(s => s == GoldQuote.Symbol)) SetStatus(quote.Eligible, false, "黄金服务端行情");
+                    GoldStatus = quote.Eligible ? "实时价格" : (quote.State == "closed" ? "黄金休市" : quote.State == "calendar_unknown" ? "交易日历待更新，提醒已暂停" : "报价已陈旧，提醒已暂停");
+                    var point = new PricePoint(GoldQuote.Symbol, quote.Price, quote.EventTime);
+                    lock (gate) latestPrices[point.Symbol] = point;
+                    if (!quote.Eligible) { initialize = true; buffer.Remove(point.Symbol); }
+                    else if (point.EventTime > last) {
+                        buffer.Add(point);
+                        if (initialize) {
+                            lock (store.State) foreach (var rule in store.State.Rules.Where(r => r.Symbol == point.Symbol)) RuleEngine.Initialize(rule,point,buffer);
+                            initialize = false;
+                        } else Evaluate(point);
+                        last = point.EventTime;
+                    }
+                }
+            } catch (OperationCanceledException) when (token.IsCancellationRequested) { return; }
+            catch { if (Gold is not null) Gold = Gold with { State = "stale" }; GoldStatus = "黄金行情连接失败，提醒已暂停"; initialize = true; buffer.Remove(GoldQuote.Symbol); }
+            PublishState();
+            try { await Task.Delay(5000,token); } catch (OperationCanceledException) { return; }
+        }
+    }
+
     private async Task MonitorLoopAsync(CancellationToken cancellationToken)
     {
         while (!cancellationToken.IsCancellationRequested)
@@ -169,8 +204,9 @@ internal sealed class MonitorService : IDisposable
             connectionCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             try
             {
-                var symbols = DesiredSymbols();
-                lock (gate) subscribedCount = symbols.Count;
+                var symbols = DesiredSymbols().Where(s => s != GoldQuote.Symbol).ToArray();
+                if (symbols.Length == 0) { await Task.Delay(1000, cancellationToken); continue; }
+                lock (gate) subscribedCount = symbols.Length;
                 if (source == ConnectionSource.Direct)
                 {
                     SetStatus(false, true, "正在直连币安");
@@ -368,7 +404,7 @@ internal sealed class MonitorService : IDisposable
     {
         var cutoff = DateTimeOffset.UtcNow.AddSeconds(-30).ToUnixTimeMilliseconds();
         lock (gate)
-            staleSymbols = latestPrices.Values.Where(point => point.EventTime < cutoff)
+            staleSymbols = latestPrices.Values.Where(point => point.Symbol == GoldQuote.Symbol ? Gold?.Eligible != true : point.EventTime < cutoff)
                 .Select(point => point.Symbol).ToHashSet(StringComparer.OrdinalIgnoreCase);
     }
 

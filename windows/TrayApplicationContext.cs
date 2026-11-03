@@ -88,10 +88,11 @@ internal sealed class TrayApplicationContext : ApplicationContext
         if (triggers.Count == 0) return;
         var first = triggers[0];
         var body = string.Join("；", triggers.Select(trigger => trigger.Kind == AlertRuleKind.Target
-            ? $"{(trigger.Direction == TriggerDirection.Rise ? "达到或高于" : "达到或低于")}目标价 {trigger.TargetPriceText}"
+            ? $"{(trigger.Direction == TriggerDirection.Rise ? "达到或高于" : "达到或低于")}目标价 {trigger.TargetPriceText}\n{trigger.BaselinePriceText}->{trigger.PriceText}"
             : $"{trigger.WindowMinutes}分钟{(trigger.Direction == TriggerDirection.Rise ? "上涨" : "下跌")} " +
               $"{trigger.BaselinePriceText}->{trigger.PriceText}"));
-        var title = $"{first.Symbol} 价格预警";
+        if (first.Symbol == GoldQuote.Symbol) body += $" 元/克 · 报价 {DateTimeOffset.FromUnixTimeMilliseconds(first.EventTime).ToLocalTime():MM-dd HH:mm:ss}";
+        var title = $"{GoldQuote.Name(first.Symbol)} 价格预警";
         trayIcon.ShowBalloonTip(8000, title, body,
             first.Direction == TriggerDirection.Rise ? ToolTipIcon.Info : ToolTipIcon.Warning);
         mainForm.RefreshHistory();
@@ -125,7 +126,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
         if (mainForm.InvokeRequired) mainForm.BeginInvoke(action); else action();
     }
 
-    private static string ShortSymbol(string symbol) => symbol.EndsWith("USDT", StringComparison.OrdinalIgnoreCase)
+    private static string ShortSymbol(string symbol) => symbol == GoldQuote.Symbol ? "黄金" : symbol.EndsWith("USDT", StringComparison.OrdinalIgnoreCase)
         ? symbol[..^4] : symbol;
     private static string LimitTooltip(string text) => text.Length <= 63 ? text : text[..62];
 }

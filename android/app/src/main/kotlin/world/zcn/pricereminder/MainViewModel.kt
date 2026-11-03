@@ -177,6 +177,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun setEntryPrice(symbol: String, priceText: String, positionSide: PositionSide): String? {
+        if (symbol == world.zcn.pricereminder.data.GoldQuote.SYMBOL) return "黄金暂不支持持仓"
         val normalized = runCatching { EntryPriceCalculator.normalize(priceText) }
             .getOrElse { return "开仓价格必须是大于 0 的数字" }
         val normalizedSymbol = symbol.uppercase()

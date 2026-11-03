@@ -8,6 +8,7 @@ internal static class CoreChecks
         {
             Expect((int)AlertRuleKind.Percentage == 0 && (int)AlertRuleKind.Target == 1 &&
                 (int)AlertRuleKind.MarketPercentage == 2, "persisted rule kind values must remain backward compatible");
+            GoldQuoteSemantics();
             EqualThresholdTriggers();
             DirectionsRearmIndependently();
             MissingWindowDoesNotTrigger();
@@ -24,6 +25,17 @@ internal static class CoreChecks
             Console.Error.WriteLine(error.Message);
             return 1;
         }
+    }
+
+    private static void GoldQuoteSemantics()
+    {
+        var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        var quote = new GoldQuote("840", "800", now - 24000, now, "quoted");
+        Expect(quote.Eligible && quote.DailyChange == "+5.00%", "gold uses source time and previous close");
+        Expect(!(quote with { EventTime = now - 121000 }).Eligible, "stale gold cannot alert");
+        Expect(!(quote with { State = "closed" }).Eligible, "closed gold cannot alert");
+        Expect((quote with { PreviousClose = "" }).DailyChange == "--", "missing close stays unknown");
+        Expect(GoldQuote.Normalize("上海黄金 Au99.99") == GoldQuote.Symbol, "gold search resolves independent symbol");
     }
 
     private static void EntryPricesValidateCalculateAndPersist()

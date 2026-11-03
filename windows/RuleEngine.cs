@@ -6,6 +6,8 @@ internal sealed class PriceBuffer
     private readonly Dictionary<string, List<PricePoint>> points = new(StringComparer.OrdinalIgnoreCase);
     private readonly object gate = new();
 
+    public void Remove(string symbol) { lock (gate) points.Remove(symbol); }
+
     public bool Add(PricePoint point)
     {
         lock (gate)

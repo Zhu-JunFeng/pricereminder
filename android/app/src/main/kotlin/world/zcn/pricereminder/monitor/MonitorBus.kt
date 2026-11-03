@@ -7,6 +7,8 @@ import kotlinx.coroutines.flow.asStateFlow
 data class LivePrice(val symbol: String, val price: String, val eventTime: Long)
 
 data class MonitorSnapshot(
+    val goldStatus: String = "等待黄金报价",
+    val goldChange: String = "--",
     val running: Boolean = false,
     val connected: Boolean = false,
     val warmingUp: Boolean = true,

@@ -45,7 +45,7 @@ private struct MenuBarLabel: View {
                     Text("·").foregroundStyle(.secondary)
                 }
                 HStack(spacing: 2) {
-                    let shortSymbol = symbol.hasSuffix("USDT") ? String(symbol.dropLast(4)) : symbol
+                    let shortSymbol = symbol == GoldQuote.symbol ? "黄金" : (symbol.hasSuffix("USDT") ? String(symbol.dropLast(4)) : symbol)
                     Text("\(shortSymbol) \(compactPrice(model.prices[symbol]?.priceText ?? "--"))")
                     PriceTrendArrow(trend: model.consecutivePriceTrends[symbol], size: 7)
                 }
@@ -69,10 +69,13 @@ struct MenuPanel: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack {
-                Text(model.statusMessage).font(.caption).foregroundStyle(.secondary)
-                Spacer()
-                Circle().fill(model.monitorState == .live ? AppTheme.primary : Color.orange).frame(width: 8, height: 8)
+            TimelineView(.periodic(from: .now, by: 1)) { context in
+                let status = model.panelMonitoringStatus(at: context.date)
+                HStack {
+                    Text(status.text).font(.caption).foregroundStyle(.secondary)
+                    Spacer()
+                    Circle().fill(status.live ? AppTheme.primary : Color.orange).frame(width: 8, height: 8)
+                }
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
@@ -126,7 +129,7 @@ private struct MenuPriceRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 5) {
             HStack {
-                Text(symbol).font(.headline)
+                Text(model.displaySymbol(symbol)).font(.headline)
                 Spacer()
                 HStack(spacing: 5) {
                     Text(compactPrice(model.prices[symbol]?.priceText ?? "--"))
@@ -136,22 +139,29 @@ private struct MenuPriceRow: View {
             }
             TimelineView(.periodic(from: .now, by: 1)) { context in
                 HStack {
-                    Text("24h 涨幅 · 北京时间 00:00 起").foregroundStyle(.secondary)
+                    Text(symbol == GoldQuote.symbol ? "日涨幅 · 相对昨收 · 元/克" : "24h 涨幅 · 北京时间 00:00 起").foregroundStyle(.secondary)
                     Spacer()
                     if let change = model.dailyChange(symbol: symbol, now: context.date) {
                         let stale = model.prices[symbol].map { model.isPriceStale($0, now: context.date) } ?? true
                         Text(stale ? "\(change.percentageText) · 价格已陈旧" : change.percentageText)
                             .foregroundStyle(stale ? Color.secondary : color(for: change.direction))
                     } else {
-                        Text(model.dailyOpenFailures.contains(symbol) ? "暂不可用" : "加载中…")
+                        Text(symbol == GoldQuote.symbol ? "--" : (model.dailyOpenFailures.contains(symbol) ? "暂不可用" : "加载中…"))
                             .foregroundStyle(.secondary)
                     }
                 }
                 .font(.caption)
                 .numericPriceStyle()
-                .help("北京时间每日 00:00 起，按该分钟 K 线开盘价计算，不含杠杆；非滚动 24 小时涨幅。")
+                .help(symbol == GoldQuote.symbol ? "相对上一交易日收盘价计算，不含杠杆。" : "北京时间每日 00:00 起，按该分钟 K 线开盘价计算，不含杠杆；非滚动 24 小时涨幅。")
                 .task(id: "\(symbol):\(BeijingDailyPrice.startMilliseconds(at: context.date))") {
                     await model.loadDailyOpen(symbol: symbol, start: BeijingDailyPrice.startMilliseconds(at: context.date))
+                }
+            }
+            if symbol == GoldQuote.symbol {
+                Text(model.goldStatus).font(.caption2).foregroundStyle(.secondary)
+                if let quote = model.goldQuote {
+                    Text("新浪财经 · 报价时间 \(quote.quoteTimeText)")
+                        .font(.caption2).foregroundStyle(.secondary)
                 }
             }
             TimelineView(.periodic(from: .now, by: 1)) { context in
@@ -237,7 +247,7 @@ struct MacSettingsView: View {
 
                 List(filteredContracts, selection: $selection) { contract in
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(contract.symbol)
+                        Text(model.displaySymbol(contract.symbol))
                         Text("\(contract.baseAsset) / \(contract.quoteAsset)")
                             .font(.caption)
                             .foregroundStyle(.secondary)
@@ -521,7 +531,7 @@ private struct MacContractPicker: View {
                         } label: {
                             HStack {
                                 VStack(alignment: .leading, spacing: 2) {
-                                    Text(contract.symbol).foregroundStyle(.primary)
+                                    Text(model.displaySymbol(contract.symbol)).foregroundStyle(.primary)
                                     Text("\(contract.baseAsset) / \(contract.quoteAsset)")
                                         .font(.caption).foregroundStyle(.secondary)
                                 }
@@ -608,11 +618,11 @@ private struct PositionEditor: View {
         VStack(alignment: .leading, spacing: 12) {
             Text(existing == nil ? "添加持仓" : "编辑持仓").font(.title2.bold())
             TextField("搜索合约，如 ETH 或 USDC", text: $query).textFieldStyle(.roundedBorder)
-            List(model.orderedContracts(query: query), selection: $symbol) { contract in
-                Text(contract.symbol).tag(contract.symbol)
+            List(model.orderedContracts(query: query).filter { $0.symbol != GoldQuote.symbol }, selection: $symbol) { contract in
+                Text(model.displaySymbol(contract.symbol)).tag(contract.symbol)
             }.frame(height: 140)
                 .overlay {
-                    if model.orderedContracts(query: query).isEmpty {
+                    if model.orderedContracts(query: query).filter({ $0.symbol != GoldQuote.symbol }).isEmpty {
                         Text(model.contracts.isEmpty ? "合约列表尚未加载，请稍后重试" : "没有匹配的合约")
                             .font(.caption).foregroundStyle(.secondary)
                     }

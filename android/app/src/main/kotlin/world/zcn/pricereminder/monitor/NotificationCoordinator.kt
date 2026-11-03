@@ -29,18 +29,22 @@ class NotificationCoordinator(private val context: Context) {
 
     fun alerts(symbol: String, triggers: List<AlertTrigger>) {
         if (triggers.isEmpty()) return
-        val summary = triggers.joinToString("；") {
+        var summary = triggers.joinToString("；") {
             if (it.kind.name == "TARGET") {
                 val direction = if (it.direction.name == "RISE") "达到或高于" else "达到或低于"
-                return@joinToString "$direction 目标价 ${it.targetPriceText ?: "--"}"
+                return@joinToString "$direction 目标价 ${it.targetPriceText ?: "--"}\n${it.baselinePriceText}->${it.priceText}"
             }
             val direction = if (it.direction.name == "RISE") "上涨" else "下跌"
             val change = (it.changePercent ?: java.math.BigDecimal.ZERO).setScale(2, RoundingMode.HALF_UP).toPlainString()
             "${it.windowMinutes}分钟$direction $change%（阈值${it.thresholdText}%）\n${it.baselinePriceText}->${it.priceText}"
         }
+        if (symbol == world.zcn.pricereminder.data.GoldQuote.SYMBOL) {
+            val time = java.text.SimpleDateFormat("MM-dd HH:mm:ss", java.util.Locale.CHINA).format(java.util.Date(triggers.first().eventTime))
+            summary += " 元/克 · 报价 $time"
+        }
         manager.notify(("alert:$symbol:${triggers.first().eventTime}").hashCode(), NotificationCompat.Builder(context, ALERT_CHANNEL)
             .setSmallIcon(android.R.drawable.stat_notify_more)
-            .setContentTitle("$symbol 价格预警")
+            .setContentTitle("${world.zcn.pricereminder.data.GoldQuote.name(symbol)} 价格预警")
             .setContentText(summary)
             .setStyle(NotificationCompat.BigTextStyle().bigText(summary))
             .setAutoCancel(true)

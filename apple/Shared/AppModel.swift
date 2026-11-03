@@ -26,6 +26,7 @@ final class AppModel: ObservableObject {
         }
     }
     func savePosition(_ record: PositionRecord) throws {
+        guard record.setting.symbol != GoldQuote.symbol else { throw PriceCoreError.invalidPrice }
         guard positionsReadable else { throw NSError(domain: "Positions", code: 1, userInfo: [NSLocalizedDescriptionKey: "持仓文件读取失败，请先恢复文件后重新启动，避免覆盖记录。"]) }
         var next = positions
         if let index = next.firstIndex(where: { $0.id == record.id }) { next[index] = record } else { next.append(record) }
@@ -53,6 +54,7 @@ final class AppModel: ObservableObject {
     @Published private(set) var dailyOpenFailures: Set<String> = []
 
     func loadDailyOpen(symbol: String, start: Int64) async {
+        if symbol == GoldQuote.symbol { return }
         if dailyOpens[symbol]?.start == start { return }
         dailyOpenFailures.remove(symbol)
         while !Task.isCancelled {
@@ -71,6 +73,7 @@ final class AppModel: ObservableObject {
     }
 
     func dailyChange(symbol: String, now: Date) -> EntryPriceChange? {
+        if symbol == GoldQuote.symbol { return goldQuote?.change }
         let start = BeijingDailyPrice.startMilliseconds(at: now)
         guard let baseline = dailyOpens[symbol], baseline.start == start,
               let point = prices[symbol], point.eventTime >= start else { return nil }
@@ -98,6 +101,64 @@ final class AppModel: ObservableObject {
         return defaults.stringArray(forKey: "recentSymbols")
             ?? [defaults.string(forKey: "primarySymbol") ?? "BTCUSDT"]
     }()
+
+    @Published private(set) var goldQuote: GoldQuote?
+    @Published private(set) var goldStatus = "等待黄金报价"
+    @Published private(set) var goldFeedAvailable = false
+    private var goldTask: Task<Void, Never>?
+    func displaySymbol(_ symbol: String) -> String { symbol == GoldQuote.symbol ? "上海黄金 Au99.99" : symbol }
+    private var binanceSymbols: [String] { desiredSymbols.filter { $0 != GoldQuote.symbol } }
+    private func connectGold() {
+        goldTask?.cancel()
+        guard desiredSymbols.contains(GoldQuote.symbol) else { return }
+        goldTask = Task {
+            var last: Int64 = 0
+            var initialize = true
+            buffer.remove(symbol: GoldQuote.symbol)
+            while !Task.isCancelled {
+                do {
+                    var request = URLRequest(url: try ServerConnectionService.serverURL().appendingPathComponent("v1/gold/quote"))
+                    request.timeoutInterval = 8
+                    request.cachePolicy = .reloadIgnoringLocalCacheData
+                    let (data, response) = try await URLSession.shared.data(for: request)
+                    guard (response as? HTTPURLResponse)?.statusCode == 200 else { throw URLError(.badServerResponse) }
+                    let quote = try JSONDecoder().decode(GoldQuote.self, from: data)
+                    guard !Task.isCancelled else { return }
+                    goldFeedAvailable = true
+                    goldQuote = quote
+                    let point = try PricePoint(symbol: GoldQuote.symbol, priceText: quote.price, eventTime: quote.eventTime)
+                    prices[GoldQuote.symbol] = point
+                    goldStatus = quote.eligible ? "实时价格" : (quote.state == "closed" ? "黄金休市" : quote.state == "calendar_unknown" ? "交易日历待更新，提醒已暂停" : "黄金报价已陈旧，提醒已暂停")
+                    if binanceSymbols.isEmpty {
+                        monitorState = quote.eligible ? .live : .disconnected
+                        statusMessage = goldStatus
+                    }
+                    if !quote.eligible {
+                        initialize = true
+                        buffer.remove(symbol: GoldQuote.symbol)
+                    } else if quote.eventTime > last {
+                        buffer.add(point)
+                        if initialize {
+                            for index in rules.indices where rules[index].symbol == GoldQuote.symbol {
+                                _ = RuleEngine.initialize(rule: &rules[index], current: point, buffer: buffer)
+                            }
+                            initialize = false
+                        } else { evaluate(point) }
+                        last = quote.eventTime
+                        if binanceSymbols.isEmpty { monitorState = .live; statusMessage = goldStatus }
+                    }
+                } catch {
+                    guard !Task.isCancelled else { return }
+                    goldFeedAvailable = false
+                    goldStatus = "黄金行情连接失败，提醒已暂停"
+                    if binanceSymbols.isEmpty { monitorState = .disconnected; statusMessage = goldStatus }
+                    initialize = true
+                    buffer.remove(symbol: GoldQuote.symbol)
+                }
+                try? await Task.sleep(for: .seconds(5))
+            }
+        }
+    }
 
     private let market: BinanceMarketClient
     private let stream: PriceStream
@@ -155,7 +216,7 @@ final class AppModel: ObservableObject {
 
     func bootstrap(platform: String) async {
         do {
-            contracts = try await market.contracts()
+            contracts = try await market.contracts() + [GoldQuote.contract]
             validMarketSymbols = Set(contracts.filter { $0.quoteAsset == "USDT" || $0.quoteAsset == "USDC" }.map(\.symbol))
             connectMarketIfNeeded()
             if !monitoringEnabled {
@@ -166,6 +227,7 @@ final class AppModel: ObservableObject {
                 contracts = try await ServerConnectionService.shared.contracts(
                     platform: platform, displayName: platform == "macos" ? "Mac" : "iPhone"
                 )
+                if !contracts.contains(where: { $0.symbol == GoldQuote.symbol }) { contracts.append(GoldQuote.contract) }
                 validMarketSymbols = Set(contracts.filter { $0.quoteAsset == "USDT" || $0.quoteAsset == "USDC" }.map(\.symbol))
                 connectMarketIfNeeded()
                 if !monitoringEnabled {
@@ -205,6 +267,7 @@ final class AppModel: ObservableObject {
         persistAllPrices()
         monitoringEnabled = false
         resetPriceTrends()
+        goldTask?.cancel()
         streamTask?.cancel()
         relayRetryTask?.cancel()
         watchdogTask?.cancel()
@@ -445,7 +508,8 @@ final class AppModel: ObservableObject {
     }
 
     func isPriceStale(_ point: PricePoint, now: Date = Date()) -> Bool {
-        EntryPriceCalculator.isStale(
+        if point.symbol == GoldQuote.symbol { return !goldFeedAvailable || goldQuote?.eligible != true || now.timeIntervalSince1970 * 1000 - Double(point.eventTime) > 120_000 }
+        return EntryPriceCalculator.isStale(
             eventTime: point.eventTime,
             nowMilliseconds: Int64(now.timeIntervalSince1970 * 1_000)
         )
@@ -459,8 +523,8 @@ final class AppModel: ObservableObject {
     func prepareIOSBackgroundDelivery() async {
         do {
             let state = try await iosBackgroundService.enterForeground(
-                rules: rules, marketRules: marketRules,
-                monitoringEnabled: monitoringEnabled, primarySymbol: primarySymbol
+                rules: rules.filter { $0.symbol != GoldQuote.symbol }, marketRules: marketRules,
+                monitoringEnabled: monitoringEnabled, primarySymbol: primarySymbol == GoldQuote.symbol ? "BTCUSDT" : primarySymbol
             )
             rules = state.rules
             LocalPersistence.saveRules(rules)
@@ -567,12 +631,13 @@ final class AppModel: ObservableObject {
     func enterBackground() async {
         persistAllPrices()
         try? await iosBackgroundService.sync(
-            rules: rules, marketRules: marketRules,
-            monitoringEnabled: monitoringEnabled, primarySymbol: primarySymbol
+            rules: rules.filter { $0.symbol != GoldQuote.symbol }, marketRules: marketRules,
+            monitoringEnabled: monitoringEnabled, primarySymbol: primarySymbol == GoldQuote.symbol ? "BTCUSDT" : primarySymbol
         )
         foregroundLeaseTask?.cancel()
         foregroundLeaseTask = nil
         await iosBackgroundService.enterBackground()
+        goldTask?.cancel()
         streamTask?.cancel()
         relayRetryTask?.cancel()
         watchdogTask?.cancel()
@@ -590,6 +655,12 @@ final class AppModel: ObservableObject {
     #endif
 
     private func connect() {
+        connectGold()
+        if binanceSymbols.isEmpty {
+            streamTask?.cancel(); watchdogTask?.cancel()
+            Task { await stream.disconnect() }
+            return
+        }
         guard desiredSymbols.count <= 50 else {
             statusMessage = "订阅超过 50 个合约，请减少持仓、关注或提醒合约"
             monitorState = .disconnected
@@ -620,11 +691,11 @@ final class AppModel: ObservableObject {
                         let displayName = "Mac"
                         #endif
                         let relay = try await ServerConnectionService.shared.prepareStream(
-                            symbols: desiredSymbols, platform: platform, displayName: displayName
+                            symbols: binanceSymbols, platform: platform, displayName: displayName
                         )
                         updates = try await stream.connect(
                             serverURL: relay.url, token: relay.token,
-                            lastEventTimes: Dictionary(uniqueKeysWithValues: desiredSymbols.map {
+                            lastEventTimes: Dictionary(uniqueKeysWithValues: binanceSymbols.map {
                                 ($0, buffer.latest(symbol: $0)?.eventTime ?? 0)
                             })
                         )
@@ -634,7 +705,7 @@ final class AppModel: ObservableObject {
                             await stream.disconnect()
                         }
                     } else {
-                        updates = try await stream.connect(symbols: desiredSymbols)
+                        updates = try await stream.connect(symbols: binanceSymbols)
                     }
                     for try await event in updates {
                         guard !Task.isCancelled else { return }
@@ -883,8 +954,8 @@ final class AppModel: ObservableObject {
     private func syncIOSBackgroundConfiguration() async {
         do {
             try await iosBackgroundService.sync(
-                rules: rules, marketRules: marketRules,
-                monitoringEnabled: monitoringEnabled, primarySymbol: primarySymbol
+                rules: rules.filter { $0.symbol != GoldQuote.symbol }, marketRules: marketRules,
+                monitoringEnabled: monitoringEnabled, primarySymbol: primarySymbol == GoldQuote.symbol ? "BTCUSDT" : primarySymbol
             )
             backgroundStatusMessage = "服务端后台监控已同步"
         } catch {
@@ -942,15 +1013,16 @@ final class AppModel: ObservableObject {
     private func sendAlertNotification(symbol: String, triggers: [AlertTrigger]) async {
         guard notificationsAllowed else { return }
         let content = UNMutableNotificationContent()
-        content.title = "\(symbol) 价格预警"
+        content.title = "\(displaySymbol(symbol)) 价格预警"
         content.body = triggers.map {
             if $0.kind == .target {
                 let direction = $0.direction == .rise ? "达到或高于" : "达到或低于"
-                return "\(direction)目标价 \($0.targetPriceText ?? "--")"
+                return "\(direction)目标价 \($0.targetPriceText ?? "--")\n\($0.baselinePriceText)->\($0.priceText)"
             }
             let direction = $0.direction == .rise ? "上涨" : "下跌"
             return "\($0.windowMinutes)分钟\(direction) \(($0.changePercent ?? .zero).formatted(.number.precision(.fractionLength(2))))%（阈值\($0.thresholdText)%）\n\($0.baselinePriceText)->\($0.priceText)"
         }.joined(separator: "；")
+        if symbol == GoldQuote.symbol { content.body += " 元/克\n报价时间：\(Date(timeIntervalSince1970: Double(triggers[0].eventTime) / 1000).formatted(date: .numeric, time: .standard))" }
         content.sound = .default
         try? await UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: "alert:\(symbol):\(triggers[0].eventTime)", content: content, trigger: nil))
     }
@@ -980,6 +1052,29 @@ final class AppModel: ObservableObject {
         guard notificationsAllowed else { return false }
         return await sendHealthNotification(title: "PriceReminder测试", body: "系统通知可正常接收")
     }
+
+    #if os(macOS)
+    func panelMonitoringStatus(at now: Date) -> (text: String, live: Bool) {
+        guard monitoringEnabled else { return ("监控已停止", false) }
+        guard panelSymbols.contains(GoldQuote.symbol) else {
+            return (statusMessage, monitorState == .live)
+        }
+        let mixed = panelSymbols.contains { $0 != GoldQuote.symbol }
+        let source = mixed ? "币安 + 新浪黄金" : "新浪黄金"
+        guard goldFeedAvailable, let quote = goldQuote else {
+            return ("\(source) · \(goldStatus)", false)
+        }
+        if quote.state == "closed" { return ("\(source) · 黄金休市", false) }
+        if quote.state == "calendar_unknown" { return ("\(source) · 黄金交易日历待更新", false) }
+        guard quote.state == "quoted", Int64(now.timeIntervalSince1970 * 1000) - quote.eventTime <= 120_000 else {
+            return ("\(source) · 黄金报价已陈旧", false)
+        }
+        if mixed && monitorState != .live {
+            return ("\(source) · 黄金正常；\(statusMessage)", false)
+        }
+        return ("\(source) · 实时监控中", true)
+    }
+    #endif
 
     var connectionSourceLabel: String {
         usingServerRelay ? "服务端中继" : "终端直连"

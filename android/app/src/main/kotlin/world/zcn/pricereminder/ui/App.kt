@@ -1,5 +1,7 @@
 package world.zcn.pricereminder.ui
 
+import world.zcn.pricereminder.data.GoldQuote
+
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -137,20 +139,26 @@ private fun MarketScreen(
     Column(Modifier.fillMaxSize().padding(horizontal = 20.dp, vertical = 18.dp)) {
         Text("实时价格", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.SemiBold)
         Spacer(Modifier.height(18.dp))
+        if (state.primarySymbol == GoldQuote.SYMBOL) {
+            Text("元/克 · 日涨幅 ${monitor.goldChange}（相对昨收）")
+            Text(monitor.goldStatus)
+        }
         ContractPicker(state.contracts, state.recentSymbols, state.primarySymbol, "主合约", viewModel::selectPrimary)
         Spacer(Modifier.height(28.dp))
-        Text(state.primarySymbol, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(GoldQuote.name(state.primarySymbol), style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Text(
             current?.price ?: "--",
             style = MaterialTheme.typography.displaySmall.copy(fontFeatureSettings = "tnum"),
             fontWeight = FontWeight.SemiBold,
         )
         Text(
-            if (current == null) "等待第一条价格" else "币安最新成交价 · ${DateFormat.getTimeInstance(DateFormat.MEDIUM).format(Date(current.eventTime))}",
+            if (current == null) "等待第一条价格"
+            else if (state.primarySymbol == GoldQuote.SYMBOL) "新浪财经 · 报价时间 ${java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.ROOT).apply { timeZone = java.util.TimeZone.getTimeZone("Asia/Shanghai") }.format(Date(current.eventTime))}"
+            else "报价时间 · ${DateFormat.getTimeInstance(DateFormat.MEDIUM).format(Date(current.eventTime))}",
             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Spacer(Modifier.height(14.dp))
-        EntryPriceSummary(
+        if (state.primarySymbol != GoldQuote.SYMBOL) EntryPriceSummary(
             entryPrice = state.entryPrices[state.primarySymbol],
             currentPrice = current?.price,
             stale = currentIsStale,
@@ -487,14 +495,15 @@ private fun ContractPicker(
     var expanded by remember { mutableStateOf(false) }
     var query by remember { mutableStateOf("") }
     val bySymbol = contracts.associateBy { it.symbol }
-    val matches = ContractOrdering.orderedSymbols(contracts.map { it.symbol }, recentSymbols, query)
+    val matching = contracts.filter { query.isBlank() || it.symbol.contains(query, true) || it.baseAsset.contains(query,true) }
+    val matches = ContractOrdering.orderedSymbols(matching.map { it.symbol }, recentSymbols, "")
         .take(50).mapNotNull(bySymbol::get)
     ExposedDropdownMenuBox(expanded, {
         expanded = it
         if (it) query = ""
     }) {
         OutlinedTextField(
-            value = if (expanded) query else selected,
+            value = if (expanded) query else GoldQuote.name(selected),
             onValueChange = { query = it; expanded = true },
             label = { Text(label) },
             placeholder = { Text("输入合约代码搜索") },
@@ -507,7 +516,7 @@ private fun ContractPicker(
         ExposedDropdownMenu(expanded, { expanded = false }) {
             matches.forEach { item ->
                 DropdownMenuItem(
-                    text = { Text(item.symbol) },
+                    text = { Text(GoldQuote.name(item.symbol)) },
                     onClick = { onSelect(item.symbol); expanded = false; query = "" },
                 )
             }
