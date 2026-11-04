@@ -88,6 +88,8 @@ jobs:
       - name: Check Swift rule core
         working-directory: apple/PriceCore
         run: swift run PriceCoreCheck
+      - name: Check authentication retry coordination
+        run: bash apple/ServiceChecks/run.sh
       - name: Build iPhone simulator app
         working-directory: apple
         run: >-

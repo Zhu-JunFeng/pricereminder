@@ -84,6 +84,19 @@ final class AppModel: ObservableObject {
     @Published var marketRules: [MarketAlertRule] = LocalPersistence.loadMarketRules()
     @Published private(set) var history: [TriggerRecord] = LocalPersistence.loadHistory()
     @Published private(set) var entryPrices: [String: EntryPriceSetting] = [:]
+    #if os(macOS)
+    @Published private(set) var authorizingServer = false
+    @Published private(set) var serverAuthorizationMessage: String?
+    func authorizeServer() async {
+        guard !authorizingServer else { return }
+        authorizingServer = true
+        defer { authorizingServer = false }
+        do {
+            _ = try await ServerConnectionService.shared.authorize(platform: "macos", displayName: "Mac")
+            serverAuthorizationMessage = "服务端连接已授权"
+        } catch { serverAuthorizationMessage = error.localizedDescription }
+    }
+    #endif
     @Published private(set) var monitorState: MonitorState = .disconnected
     @Published private(set) var statusMessage = "监控未启动"
     @Published private(set) var backgroundStatusMessage = "仅支持前台监控"

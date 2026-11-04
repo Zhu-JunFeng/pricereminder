@@ -150,7 +150,27 @@ struct MenuPanel: View {
             .padding(14)
         }
         .frame(width: 380)
+        .background(Color(nsColor: .windowBackgroundColor))
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .background(MenuPanelWindowStyle())
     }
+}
+
+private struct MenuPanelWindowStyle: NSViewRepresentable {
+    final class View: NSView {
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            guard let window else { return }
+            window.isOpaque = false
+            window.backgroundColor = .clear
+            window.hasShadow = true
+            window.contentView?.wantsLayer = true
+            window.contentView?.layer?.cornerRadius = 14
+            window.contentView?.layer?.masksToBounds = true
+        }
+    }
+    func makeNSView(context: Context) -> View { View() }
+    func updateNSView(_ view: View, context: Context) {}
 }
 
 private struct MenuPriceRow: View {
@@ -462,6 +482,10 @@ struct MacSettingsView: View {
 
                 HStack {
                     Button("刷新状态") { Task { await model.refreshSelfCheck() } }
+                    Button(model.authorizingServer ? "正在授权…" : "授权服务端连接") {
+                        Task { await model.authorizeServer() }
+                    }
+                    .disabled(model.authorizingServer)
                     Button("发送测试通知") {
                         Task {
                             testResult = await model.sendTestNotification()
@@ -473,6 +497,11 @@ struct MacSettingsView: View {
                         Text(testResult).font(.caption).foregroundStyle(.secondary)
                     }
                 }
+                if let message = model.serverAuthorizationMessage {
+                    Text(message).font(.caption).foregroundStyle(.secondary)
+                }
+                Text("自动重连不会弹出钥匙串密码窗口；仅主动授权时可能需要系统确认。")
+                    .font(.caption).foregroundStyle(.secondary)
                 Spacer()
             }
             .padding(20)
