@@ -65,22 +65,10 @@ internal sealed class ApiClient
         IEnumerable<string> symbols, CancellationToken cancellationToken)
     {
         var token = await AuthenticatedTokenAsync(cancellationToken);
-        var subscription = JsonSerializer.Serialize(new
-        {
-            symbols = symbols.Distinct(StringComparer.OrdinalIgnoreCase).Order(StringComparer.OrdinalIgnoreCase),
-        });
-        using var request = new HttpRequestMessage(HttpMethod.Put, $"{ServerBaseUrl}/v1/subscriptions")
-        {
-            Content = new StringContent(subscription, Encoding.UTF8, "application/json"),
-        };
-        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
-        using var response = await http.SendAsync(request, cancellationToken);
-        await EnsureSuccessAsync(response, cancellationToken);
-
         var socket = new ClientWebSocket();
         socket.Options.SetRequestHeader("Authorization", $"Bearer {token}");
         socket.Options.KeepAliveInterval = TimeSpan.FromSeconds(20);
-        return (socket, new Uri(ServerBaseUrl.Replace("https://", "wss://", StringComparison.Ordinal) + "/v1/stream"));
+        return (socket, new Uri(ServerBaseUrl.Replace("https://", "wss://", StringComparison.Ordinal) + "/v2/stream"));
     }
 
     public static string ResumeMessage(IReadOnlyDictionary<string, long> lastEventTimes) =>

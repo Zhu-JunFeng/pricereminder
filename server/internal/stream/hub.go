@@ -18,9 +18,10 @@ type Client struct {
 }
 
 type Hub struct {
-	mu      sync.Mutex
-	buffer  *pricebuffer.Buffer
-	clients map[*Client]struct{}
+	mu              sync.Mutex
+	buffer          *pricebuffer.Buffer
+	clients         map[*Client]struct{}
+	latestEventTime int64
 }
 
 func NewHub(buffer *pricebuffer.Buffer) *Hub {
@@ -89,4 +90,19 @@ func (h *Hub) UpdateSubscriptions(deviceID uuid.UUID, symbols []string) {
 	}
 }
 
-func (h *Hub) Status() (symbols int, latestEventTime int64) { return h.buffer.Status() }
+func (h *Hub) Observe(eventTime int64) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if eventTime > h.latestEventTime {
+		h.latestEventTime = eventTime
+	}
+}
+func (h *Hub) Status() (symbols int, latestEventTime int64) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	symbols, latestEventTime = h.buffer.Status()
+	if h.latestEventTime > latestEventTime {
+		latestEventTime = h.latestEventTime
+	}
+	return
+}

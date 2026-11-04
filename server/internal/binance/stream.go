@@ -51,6 +51,9 @@ func RunPriceStream(
 	for ctx.Err() == nil {
 		if err := consumePriceStream(ctx, wsURL, symbols, catalog, publisher); err != nil && ctx.Err() == nil {
 			logger.Error("binance price stream disconnected", "error", err)
+			if resetter, ok := publisher.(interface{ Reset() }); ok {
+				resetter.Reset()
+			}
 		}
 		timer := time.NewTimer(2 * time.Second)
 		select {
@@ -86,6 +89,25 @@ func consumePriceStream(
 	defer cancel()
 	subscriptionErrors := make(chan error, 1)
 	go maintainSubscriptions(streamContext, connection, symbols, subscriptionErrors)
+	// Transport liveness is independent of whether a particular contract trades.
+	go func() {
+		tick := time.NewTicker(20 * time.Second)
+		defer tick.Stop()
+		for {
+			select {
+			case <-streamContext.Done():
+				return
+			case <-tick.C:
+				pingCtx, done := context.WithTimeout(streamContext, 8*time.Second)
+				err := connection.Ping(pingCtx)
+				done()
+				if err != nil {
+					connection.CloseNow()
+					return
+				}
+			}
+		}
+	}()
 
 	for {
 		_, data, err := connection.Read(streamContext)

@@ -20,6 +20,7 @@ import (
 	"pricereminder/server/internal/pricebuffer"
 	"pricereminder/server/internal/store"
 	"pricereminder/server/internal/stream"
+	"pricereminder/server/internal/traderelay"
 )
 
 func main() {
@@ -66,14 +67,18 @@ func main() {
 		os.Exit(1)
 	}
 	go iosWorker.Run(ctx)
-	go binance.RunPriceStream(ctx, configuration.BinanceWSURL, dataStore, catalog, priceFanout{hub: hub, iosWorker: iosWorker}, logger)
+	relay := traderelay.New(dataStore, catalog)
+	go relay.Run(ctx)
+	go binance.RunPriceStream(ctx, configuration.BinanceWSURL, relay, catalog, priceFanout{hub: hub, iosWorker: iosWorker, relay: relay}, logger)
 	go binance.RunMarketStream(ctx, configuration.BinanceWSURL, catalog, marketFanout{iosWorker}, iosWorker.MarketEnabled, logger)
 
 	goldService := &gold.Service{}
 	go goldService.Run(ctx, logger)
 	handler := http.NewServeMux()
 	handler.Handle("GET /v1/gold/quote", goldService)
-	handler.Handle("/", api.New(dataStore, catalog, hub, iosWorker, configuration.AllowedOrigin, logger).Handler())
+	apiServer := api.New(dataStore, catalog, hub, iosWorker, configuration.AllowedOrigin, logger)
+	handler.Handle("GET /v2/stream", apiServer.TradeRelayHandler(relay))
+	handler.Handle("/", apiServer.Handler())
 	server := &http.Server{
 		Addr:              configuration.ListenAddr,
 		Handler:           handler,
@@ -99,11 +104,24 @@ type marketFanout struct{ worker *iosmonitor.Worker }
 func (p marketFanout) Publish(point domain.PricePoint) { p.worker.PublishMarket(point) }
 
 type priceFanout struct {
+	relay     *traderelay.Relay
 	hub       *stream.Hub
 	iosWorker *iosmonitor.Worker
 }
 
+func (p priceFanout) Reset() {
+	if p.relay != nil {
+		p.relay.Reset()
+	}
+}
+
 func (p priceFanout) Publish(point domain.PricePoint) {
-	p.hub.Publish(point)
-	p.iosWorker.Publish(point)
+	p.hub.Observe(point.EventTime)
+	if p.relay != nil {
+		p.relay.Publish(point)
+	}
+	if p.relay == nil || p.relay.LegacyInterested(point.Symbol) {
+		p.hub.Publish(point)
+		p.iosWorker.Publish(point)
+	}
 }

@@ -207,6 +207,20 @@ func marketScannerUsesRollingExtremesAndIndependentResets() throws {
     )
 }
 
+func relayAndAggregationChecks() throws {
+    let accumulator = TradeAccumulator()
+    accumulator.add(try PricePoint(symbol: "BTCUSDT", priceText: "100", eventTime: 2000))
+    accumulator.add(try PricePoint(symbol: "ETHUSDC", priceText: "99", eventTime: 1000))
+    _ = accumulator.drain()
+    accumulator.add(try PricePoint(symbol: "BTCUSDT", priceText: "200", eventTime: 2000))
+    accumulator.add(try PricePoint(symbol: "ETHUSDC", priceText: "101", eventTime: 1500))
+    let points = accumulator.drain()
+    try expect(points.count == 1 && points[0].symbol == "ETHUSDC", "per-symbol watermark must reject duplicates without dropping slower contracts")
+    let json = #"{"type":"batch","protocol":2,"version":1,"session":"session","eventId":"event","latestEventTime":2000,"triggers":[{"ruleId":"00000000-0000-0000-0000-000000000001","symbol":"BTCUSDT","kind":"market_percentage","direction":"rise","changePct":"2","thresholdPct":"1","windowMinutes":1,"price":"102","baselinePrice":"100","eventTime":2000}]}"#
+    let batch = try JSONDecoder().decode(TradeRelayBatch.self, from: Data(json.utf8))
+    try expect(batch.alerts().count == 1 && batch.alerts()[0].baselinePriceText == "100", "relay event must preserve scanner baseline")
+}
+
 func entryPricesValidateAndCalculateSignedChanges() throws {
     let setting = try EntryPriceSetting(
         symbol: "btcusdt", priceText: " 100.0000 ", positionSide: .long
@@ -353,6 +367,7 @@ do {
     try recentContractsLeadMatchingResultsWithoutChangingTheRest()
     try consecutivePriceTrendRequiresTwoMatchingMovements()
     try marketScannerUsesRollingExtremesAndIndependentResets()
+    try relayAndAggregationChecks()
     try entryPricesValidateAndCalculateSignedChanges()
     print("PriceCore checks passed")
 } catch {

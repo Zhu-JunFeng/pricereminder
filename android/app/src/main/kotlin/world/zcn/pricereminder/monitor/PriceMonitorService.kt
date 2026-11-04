@@ -14,6 +14,10 @@ import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 import world.zcn.pricereminder.PriceReminderApplication
+import org.json.JSONObject
+import org.json.JSONArray
+import world.zcn.pricereminder.core.AlertTrigger
+import world.zcn.pricereminder.core.TriggerDirection
 import world.zcn.pricereminder.core.AlertRule
 import world.zcn.pricereminder.core.AlertRuleKind
 import world.zcn.pricereminder.core.MarketAlertRule
@@ -31,7 +35,7 @@ import java.util.concurrent.ConcurrentHashMap
 import kotlin.time.Duration.Companion.seconds
 
 class PriceMonitorService : Service() {
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private lateinit var notifications: NotificationCoordinator
     private val buffer = PriceBuffer()
     private val latestEventTimes = ConcurrentHashMap<String, Long>()
@@ -40,8 +44,19 @@ class PriceMonitorService : Service() {
     private val pendingPrices = ConcurrentHashMap<String, PricePoint>()
     private var subscribedSymbols = emptySet<String>()
     private var socket: WebSocket? = null
+    private val tradeSockets = mutableSetOf<WebSocket>()
+    private var generation = 0L
+    private var connectionKey = ""
+    private var relayVersion = 0L
+    private var relaySignature = ""
+    private val relayEvents = mutableSetOf<String>()
+    private val initialSymbols = mutableSetOf<String>()
+    private fun hasMarketRules() = container.localStore.marketRules().any { it.enabled }
+    private fun desired() = (container.localStore.rules().filter { it.enabled }.map { it.symbol } + container.localStore.primarySymbol).distinct().filter { it != GoldQuote.SYMBOL }.sorted()
+
     private var marketSocket: WebSocket? = null
     private var marketRulesSignature = ""
+    private var marketRuleKeys = mapOf<String,String>()
     private var validMarketSymbols = emptySet<String>()
     private var reconnectJob: Job? = null
     private var ready = false
@@ -70,13 +85,13 @@ class PriceMonitorService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        connectionSource = ConnectionSource.DIRECT
         connect()
-        connectMarketIfNeeded()
         return START_NOT_STICKY
     }
 
     override fun onDestroy() {
+        generation++
+        tradeSockets.forEach { it.cancel() }; tradeSockets.clear()
         persistAllPrices()
         reconnectJob?.cancel()
         socket?.close(1000, "service stopped")
@@ -124,175 +139,117 @@ class PriceMonitorService : Service() {
         }
     }
 
-    private fun connectMarketIfNeeded() {
-        val stored = container.localStore.marketRules().filter { it.enabled }
-        val signature = stored.sortedBy { it.id }.joinToString("|") { "${it.id}:${it.windowMinutes}:${it.thresholdText}" }
-        if (signature == marketRulesSignature && (signature.isEmpty() || marketSocket != null)) return
-        marketRulesSignature = signature
-        val replacedSocket = marketSocket
-        marketSocket = null
-        replacedSocket?.cancel()
-        marketScanner.resetAll()
-        if (stored.isEmpty()) {
-            MonitorBus.update { it.copy(marketMessage = "全市场扫描未启用", marketContractCount = 0) }
-            return
+    private fun connectMarketIfNeeded() { connect() }
+
+    private fun configuration(): JSONObject {
+        val rules = JSONArray()
+        container.localStore.marketRules().filter { it.enabled }.sortedBy { it.id }.forEach { r ->
+            rules.put(JSONObject().put("id",r.id).put("windowMinutes",r.windowMinutes).put("thresholdText",r.thresholdText).put("isEnabled",true))
         }
-        MonitorBus.update { it.copy(marketMessage = "正在连接币安全市场行情", marketContractCount = 0) }
-        scope.launch {
-            runCatching {
-                validMarketSymbols = container.apiClient.binanceContracts().mapTo(mutableSetOf()) { it.symbol }
-                marketSocket = container.apiClient.http.newWebSocket(container.apiClient.allMarketRequest(), marketListener())
-            }.onFailure { scheduleMarketReconnect(it.message ?: "全市场连接失败") }
-        }
+        return JSONObject().put("type","configure").put("protocol",2).put("symbols",JSONArray(desired())).put("marketRules",rules)
     }
-
-    private fun marketListener() = object : WebSocketListener() {
-        override fun onOpen(webSocket: WebSocket, response: Response) {
-            if (webSocket === marketSocket) MonitorBus.update { it.copy(marketMessage = "全市场实时扫描中") }
-        }
-
-        override fun onMessage(webSocket: WebSocket, text: String) {
-            if (webSocket !== marketSocket) return
-            val batch = runCatching {
-                container.apiClient.json.decodeFromString<List<MarketMiniTickerDto>>(text)
-            }.getOrNull() ?: return
-            val rules = container.localStore.marketRules().filter { it.enabled }.mapNotNull {
-                runCatching { MarketAlertRule(it.id, it.windowMinutes, it.thresholdText, it.enabled) }.getOrNull()
-            }
-            marketScanner.retainRules(rules.mapTo(mutableSetOf()) { it.id })
-            val triggers = batch.asSequence()
-                .filter { it.eventType == "24hrMiniTicker" && it.symbol in validMarketSymbols && it.closePrice != "0" }
-                .mapNotNull { runCatching { PricePoint(it.symbol, it.closePrice, it.eventTime) }.getOrNull() }
-                .flatMap { point -> rules.asSequence().flatMap { marketScanner.evaluate(it, point).asSequence() } }
-                .toList()
-            val now = System.currentTimeMillis()
-            MonitorBus.update {
-                it.copy(
-                    marketMessage = "全市场实时扫描中", marketContractCount = validMarketSymbols.size,
-                    lastMarketReceivedAt = now,
-                )
-            }
-            triggers.groupBy { it.symbol to it.eventTime }
-                .forEach { (key, items) -> notifications.alerts(key.first, items) }
-            if (triggers.isNotEmpty()) {
-                container.localStore.appendHistory(triggers.map {
-                    TriggerHistory(
-                        id = "${it.ruleId}:${it.direction}:${it.eventTime}", symbol = it.symbol,
-                        direction = it.direction.name.lowercase(), kind = "market_percentage",
-                        changePercent = it.changePercent?.toPlainString(), windowMinutes = it.windowMinutes,
-                        thresholdText = it.thresholdText, targetPriceText = null,
-                        priceText = it.priceText, eventTime = it.eventTime,
-                    )
-                })
-            }
-        }
-
-        override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-            if (webSocket === marketSocket) scheduleMarketReconnect(t.message ?: "全市场连接中断")
-        }
-
-        override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
-            if (webSocket === marketSocket) scheduleMarketReconnect(reason.ifBlank { "全市场连接关闭" })
-        }
+    private fun sendConfiguration() {
+        val config=configuration()
+        val signature=config.toString()
+        if(signature==relaySignature)return
+        relayVersion++
+        if(socket?.send(config.put("version",relayVersion).toString())==true)relaySignature=signature
     }
-
-    private fun scheduleMarketReconnect(reason: String) {
-        marketSocket = null
-        marketScanner.resetAll()
-        MonitorBus.update { it.copy(marketMessage = "全市场扫描已中断：$reason", marketContractCount = 0) }
-        scope.launch {
-            delay(5.seconds)
-            marketRulesSignature = ""
-            connectMarketIfNeeded()
-        }
+    private fun recordMarket(triggers: List<AlertTrigger>) {
+        triggers.groupBy { it.symbol to it.eventTime }.forEach { (key,items)->notifications.alerts(key.first,items) }
+        if(triggers.isNotEmpty())container.localStore.appendHistory(triggers.map {
+            TriggerHistory(id="${it.ruleId}:${it.direction}:${it.eventTime}",symbol=it.symbol,direction=it.direction.name.lowercase(),kind="market_percentage",changePercent=it.changePercent?.toPlainString(),windowMinutes=it.windowMinutes,thresholdText=it.thresholdText,targetPriceText=null,priceText=it.priceText,eventTime=it.eventTime)
+        })
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     private fun connect() {
-        socket?.cancel()
-        reconnectJob?.cancel()
-        ready = false
-        lastMessageAt = 0L
-        connectionStartedAt = System.currentTimeMillis()
-        val source = connectionSource
-        MonitorBus.update {
-            it.copy(
-                connected = false, warmingUp = true,
-                message = if (source == ConnectionSource.DIRECT) "正在直连币安" else "正在连接服务端行情",
-                source = if (source == ConnectionSource.DIRECT) "终端直连" else "服务端中继",
-                subscribedCount = subscribedSymbols.size,
-                notificationsEnabled = notifications.notificationsEnabled(),
-            )
+        refreshRules()
+        val symbols=desired()
+        if(symbols.size>50) {MonitorBus.update {it.copy(message="最多订阅 50 个普通合约")};return}
+        initialSymbols.addAll(symbols.toSet()-subscribedSymbols)
+        (symbols.toSet()-subscribedSymbols).forEach { buffer.remove(it) }
+        subscribedSymbols=symbols.toSet()
+        val key="$connectionSource:" + if(hasMarketRules())"all" else symbols.joinToString(",")
+        if(key==connectionKey) {
+            if(connectionSource==ConnectionSource.SERVER)sendConfiguration()
+            return
         }
+        connectionKey=key
+        val epoch=++generation
+        tradeSockets.forEach {it.cancel()};tradeSockets.clear();socket?.cancel();socket=null
+        reconnectJob?.cancel()
+        pendingPrices.clear();marketScanner.resetAll();initialSymbols.clear();initialSymbols.addAll(symbols)
+        symbols.forEach {buffer.remove(it)}
+        relaySignature="";ready=false;lastMessageAt=0L;connectionStartedAt=System.currentTimeMillis()
+        val source=connectionSource
+        MonitorBus.update {it.copy(connected=false,warmingUp=true,message="正在连接${if(source==ConnectionSource.DIRECT)"币安" else "服务器"}",source=sourceLabel(),marketMessage=if(hasMarketRules())"正在重新积累全市场窗口" else "全市场扫描未启用")}
         scope.launch {
-            runCatching {
-                refreshRules()
-                val symbols = (activeRules.values.filter { it.enabled }.map { it.symbol } + container.localStore.primarySymbol).distinct().filter { it != GoldQuote.SYMBOL }.take(50)
-                subscribedSymbols = symbols.toSet()
-                if (symbols.isEmpty()) return@launch
-                MonitorBus.update { it.copy(subscribedCount = symbols.size) }
-                val request = if (source == ConnectionSource.DIRECT) {
-                    container.apiClient.streamRequest(symbols)
-                } else {
-                    container.apiClient.serverStreamRequest(symbols)
+            try {
+                if(symbols.isEmpty()&&!hasMarketRules())return@launch
+                val groups = if(source==ConnectionSource.DIRECT&&hasMarketRules()) {
+                    validMarketSymbols=container.apiClient.binanceContracts().mapTo(mutableSetOf()){it.symbol}
+                    validMarketSymbols.sorted().chunked(150)
+                } else listOf(symbols)
+                if(epoch!=generation)return@launch
+                for(group in groups) {
+                    val request=if(source==ConnectionSource.DIRECT)container.apiClient.streamRequest(group) else container.apiClient.serverStreamRequest(group)
+                    if(epoch!=generation)return@launch
+                    val ws=container.apiClient.http.newWebSocket(request,listener(source,epoch))
+                    tradeSockets.add(ws);socket=ws
                 }
-                socket = container.apiClient.http.newWebSocket(request, listener(source))
-            }.onFailure { scheduleReconnect(source, it.message ?: "连接失败") }
+            } catch(e:Exception) {if(epoch==generation){connectionKey="";scheduleReconnect(source,e.message?:"连接失败")}}
         }
     }
 
-    private fun listener(source: ConnectionSource) = object : WebSocketListener() {
-        override fun onOpen(webSocket: WebSocket, response: Response) {
-            if (webSocket !== socket) return
-            if (source == ConnectionSource.SERVER) {
-                serverConnectedAt = System.currentTimeMillis()
-                webSocket.send(container.apiClient.resumeMessage(latestEventTimes))
-            } else {
-                ready = true
-                updateReadiness()
-            }
-        }
-
-        override fun onMessage(webSocket: WebSocket, text: String) {
-            if (webSocket !== socket) return
-            if (source == ConnectionSource.DIRECT) {
-                val trade = runCatching { container.apiClient.json.decodeFromString<CombinedTradeDto>(text).data }.getOrNull() ?: return
-                if (trade.eventType != "trade" || trade.price == "0" || trade.quantity == "0") return
-                runCatching { PricePoint(trade.symbol, trade.price, trade.eventTime) }.getOrNull()
-                    ?.let {
-                        lastMessageAt = System.currentTimeMillis()
-                        MonitorBus.update { state -> state.copy(lastReceivedAt = lastMessageAt, lastError = null) }
-                        pendingPrices[it.symbol] = it
+    private fun listener(source: ConnectionSource, epoch: Long) = object: WebSocketListener() {
+        override fun onOpen(ws:WebSocket,response:Response) {scope.launch {
+            if(epoch!=generation)return@launch
+            lastMessageAt=System.currentTimeMillis()
+            if(source==ConnectionSource.SERVER) {serverConnectedAt=lastMessageAt;sendConfiguration()}
+            else {ready=true;updateReadiness()}
+        }}
+        override fun onMessage(ws:WebSocket,text:String) {scope.launch {
+            if(epoch!=generation)return@launch
+            try {
+                lastMessageAt=System.currentTimeMillis()
+                if(source==ConnectionSource.DIRECT) {
+                    val trade=container.apiClient.json.decodeFromString<CombinedTradeDto>(text).data
+                    if(trade.eventType!="trade"||trade.price=="0"||trade.quantity=="0")return@launch
+                    val point=PricePoint(trade.symbol,trade.price,trade.eventTime)
+                    val old=pendingPrices[point.symbol]
+                    if(old==null||point.eventTime>old.eventTime)pendingPrices[point.symbol]=point
+                } else {
+                    val batch=JSONObject(text)
+                    check(batch.getInt("protocol")==2){"服务器不支持行情协议 v2"}
+                    if(batch.getLong("version")!=relayVersion)return@launch
+                    val latest=batch.optLong("latestEventTime")
+                    check(!hasMarketRules()||latest==0L||System.currentTimeMillis()-latest<=60000){"服务端行情停滞"}
+                    ready=true
+                    val prices=batch.optJSONArray("prices")?:JSONArray()
+                    for(i in 0 until prices.length()) {val p=prices.getJSONObject(i);pendingPrices[p.getString("symbol")]=PricePoint(p.getString("symbol"),p.getString("price"),p.getLong("eventTime"))}
+                    val event=batch.optString("eventId")
+                    if(event.isNotEmpty()&&relayEvents.add(event)) {
+                        val triggers=batch.optJSONArray("triggers")?:JSONArray()
+                        val valid=container.localStore.marketRules().filter{it.enabled}.map{it.id}.toSet()
+                        recordMarket((0 until triggers.length()).mapNotNull {i->val t=triggers.getJSONObject(i)
+                            if(t.getString("ruleId") !in valid)null else AlertTrigger(t.getString("ruleId"),t.getString("symbol"),AlertRuleKind.MARKET_PERCENTAGE,if(t.getString("direction")=="rise")TriggerDirection.RISE else TriggerDirection.FALL,t.optString("changePct").toBigDecimalOrNull(),t.optString("thresholdPct"),t.getInt("windowMinutes"),null,t.getString("price"),t.getString("baselinePrice"),t.getLong("eventTime"))
+                        })
+                        if(relayEvents.size>2000){relayEvents.clear();relayEvents.add(event)}
                     }
-                return
-            }
-            val message = runCatching { container.apiClient.json.decodeFromString<RelayMessage>(text) }.getOrNull() ?: return
-            when (message.type) {
-                "ready" -> { ready = true; updateReadiness() }
-                "status" -> MonitorBus.update { it.copy(warmingUp = true, message = "服务端币安行情 · 正在补齐价格") }
-                "price" -> if (message.symbol != null && message.price != null && message.eventTime != null) {
-                    runCatching { PricePoint(message.symbol, message.price, message.eventTime, message.replay) }.getOrNull()
-                        ?.let {
-                            lastMessageAt = System.currentTimeMillis()
-                            MonitorBus.update { state -> state.copy(lastReceivedAt = lastMessageAt, lastError = null) }
-                            pendingPrices[it.symbol] = it
-                        }
+                    MonitorBus.update {it.copy(marketMessage=if(hasMarketRules())"服务端全市场扫描中" else "全市场扫描未启用",lastReceivedAt=lastMessageAt)}
+                    updateReadiness()
                 }
-            }
-        }
-
-        override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-            if (webSocket === socket) scheduleReconnect(source, t.message ?: "行情连接中断")
-        }
-
-        override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
-            if (webSocket === socket && code != 1000) scheduleReconnect(source, reason.ifBlank { "行情连接关闭" })
-        }
+            } catch(e:Exception) {connectionKey="";scheduleReconnect(source,e.message?:"行情协议错误")}
+        }}
+        override fun onFailure(ws:WebSocket,t:Throwable,response:Response?) {scope.launch {if(epoch==generation){connectionKey="";scheduleReconnect(source,t.message?:"连接中断")}}}
+        override fun onClosed(ws:WebSocket,code:Int,reason:String) {scope.launch {if(epoch==generation){connectionKey="";scheduleReconnect(source,reason)}}}
     }
 
     private fun process(point: PricePoint) {
             if (!buffer.add(point)) return
+            if(initialSymbols.remove(point.symbol)) activeRules.values.filter{it.symbol==point.symbol}.forEach{RuleEngine.initialize(it,point,buffer)}
             latestEventTimes[point.symbol] = point.eventTime
             MonitorBus.update { state ->
                 state.copy(
@@ -315,7 +272,14 @@ class PriceMonitorService : Service() {
             delay(1.seconds)
             val prices = pendingPrices.entries.map { it.key to it.value }.sortedBy { it.first }
             prices.forEach { (symbol, point) ->
-                if (pendingPrices.remove(symbol, point)) process(point)
+                if (pendingPrices.remove(symbol, point)) {
+                    if(connectionSource==ConnectionSource.DIRECT&&hasMarketRules()) {
+                        val rules=container.localStore.marketRules().filter{it.enabled}.map{MarketAlertRule(it.id,it.windowMinutes,it.thresholdText,it.enabled)}
+                        recordMarket(rules.flatMap{marketScanner.evaluate(it,point)})
+                        MonitorBus.update {it.copy(marketMessage="本地全市场实时扫描中",marketContractCount=validMarketSymbols.size,lastMarketReceivedAt=System.currentTimeMillis())}
+                    }
+                    if(symbol in subscribedSymbols)process(point)
+                }
             }
         }
     }
@@ -345,6 +309,9 @@ class PriceMonitorService : Service() {
     }
 
     private fun refreshRules() {
+        val nextKeys=container.localStore.marketRules().filter{it.enabled}.associate{it.id to "${it.windowMinutes}:${it.thresholdText}"}
+        marketScanner.retainRules(nextKeys.keys.filter{nextKeys[it]==marketRuleKeys[it]}.toSet())
+        marketRuleKeys=nextKeys
         val stored = container.localStore.rules()
         val ids = stored.mapTo(mutableSetOf()) { it.id }
         activeRules.keys.removeAll { it !in ids }
@@ -433,6 +400,10 @@ class PriceMonitorService : Service() {
 
     private fun scheduleReconnect(failedSource: ConnectionSource, reason: String) {
         if (reconnectJob?.isActive == true) return
+        generation++
+        connectionKey=""
+        tradeSockets.forEach {it.cancel()};tradeSockets.clear();socket?.cancel();socket=null
+        pendingPrices.clear()
         reconnectCount += 1
         lastError = reason
         ready = false
@@ -463,7 +434,7 @@ class PriceMonitorService : Service() {
             refreshRules()
             connectMarketIfNeeded()
             val desiredSymbols = (activeRules.values.filter { it.enabled }.map { it.symbol } + container.localStore.primarySymbol)
-                .distinct().filter { it != GoldQuote.SYMBOL }.take(50).toSet()
+                .distinct().filter { it != GoldQuote.SYMBOL }.toSet()
             if (desiredSymbols != subscribedSymbols) {
                 connect()
                 continue
@@ -472,9 +443,11 @@ class PriceMonitorService : Service() {
             val now = System.currentTimeMillis()
             if (connectionSource == ConnectionSource.SERVER && serverConnectedAt > 0 && now - serverConnectedAt >= 5 * 60_000L) {
                 serverConnectedAt = now
-                connectionSource = ConnectionSource.DIRECT
-                connect()
-                continue
+                if(container.apiClient.probeDirect()) {
+                    connectionSource = ConnectionSource.DIRECT
+                    connect()
+                    continue
+                }
             }
             val silentFor = now - (lastMessageAt.takeIf { it > 0 } ?: connectionStartedAt)
             MonitorBus.update { state ->
@@ -484,12 +457,12 @@ class PriceMonitorService : Service() {
                         .mapTo(mutableSetOf()) { it.symbol },
                 )
             }
-            if (connectionSource == ConnectionSource.DIRECT && silentFor >= 3.seconds.inWholeMilliseconds) {
+            if (connectionSource == ConnectionSource.DIRECT && hasMarketRules() && silentFor >= 60.seconds.inWholeMilliseconds) {
                 socket?.cancel()
-                scheduleReconnect(ConnectionSource.DIRECT, "3 秒内未收到有效行情")
+                scheduleReconnect(ConnectionSource.DIRECT, "60 秒内未收到有效行情")
                 continue
             }
-            if (silentFor >= 60.seconds.inWholeMilliseconds && !interruptionReported) {
+            if (connectionSource == ConnectionSource.SERVER && silentFor >= 60.seconds.inWholeMilliseconds && !interruptionReported) {
                 interruptionReported = true
                 notifications.health("价格监控已中断", "连续 60 秒未收到有效行情，正在重连")
                 socket?.cancel()

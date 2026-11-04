@@ -233,6 +233,7 @@ public enum MonitorState: Equatable, Sendable {
 }
 
 public enum PriceStreamEvent: Sendable {
+    case relay(TradeRelayBatch)
     case price(PricePoint)
     case warmingUp(symbol: String?, reason: String?)
     case ready(serverTime: Int64?)

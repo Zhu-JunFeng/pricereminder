@@ -92,16 +92,25 @@ public actor PriceStream {
         }
 
         let (updates, continuation) = AsyncThrowingStream<[PricePoint], Error>.makeStream()
+        let accumulator = TradeAccumulator()
+        let delivery = Task {
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(1))
+                guard !Task.isCancelled else { return }
+                let points = accumulator.drain()
+                if !points.isEmpty { continuation.yield(points) }
+            }
+        }
         marketReceiverTasks = requests.map { request in
             Task {
                 while !Task.isCancelled {
                     let socket = session.webSocketTask(with: request)
                     socket.resume()
                     do {
-                        var latestBySymbol: [String: PricePoint] = [:]
-                        var batchSecond: Int64?
                         while !Task.isCancelled {
-                            let frame = try await socket.receive()
+                            let frame = try await withTaskCancellationHandler {
+                                try await socket.receive()
+                            } onCancel: { socket.cancel(with: .goingAway, reason: nil) }
                             let data: Data
                             switch frame {
                             case .data(let value): data = value
@@ -109,22 +118,18 @@ public actor PriceStream {
                             @unknown default: continue
                             }
                             guard let point = try Self.decodeEvent(from: data) else { continue }
-                            let second = point.eventTime / 1_000
-                            if let batchSecond, second > batchSecond, !latestBySymbol.isEmpty {
-                                continuation.yield(latestBySymbol.values.sorted { $0.symbol < $1.symbol })
-                                latestBySymbol.removeAll(keepingCapacity: true)
-                            }
-                            latestBySymbol[point.symbol] = point
-                            batchSecond = max(batchSecond ?? second, second)
+                            accumulator.add(point)
                         }
                     } catch {
                         socket.cancel(with: .goingAway, reason: nil)
                         guard !Task.isCancelled else { return }
-                        try? await Task.sleep(for: .seconds(1))
+                        continuation.finish(throwing: error)
+                        return
                     }
                 }
             }
         }
+        marketReceiverTasks.append(delivery)
         let receiverTasks = marketReceiverTasks
         continuation.onTermination = { _ in receiverTasks.forEach { $0.cancel() } }
         return updates
@@ -179,6 +184,26 @@ public actor PriceStream {
         return eventStream(task: task, decoder: Self.decodeServerEvent)
     }
 
+    public func connectRelay(url: URL, token: String, configuration: TradeRelayConfiguration) async throws -> AsyncThrowingStream<PriceStreamEvent, Error> {
+        await disconnect()
+        var request = URLRequest(url: url, timeoutInterval: 10)
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        let socket = session.webSocketTask(with: request)
+        task = socket; socket.resume()
+        try await ping(socket)
+        try await configureRelay(configuration)
+        return eventStream(task: socket) { data in
+            let batch = try JSONDecoder().decode(TradeRelayBatch.self, from: data)
+            guard batch.protocol == 2 else { throw PriceCoreError.invalidServerResponse }
+            return .relay(batch)
+        }
+    }
+
+    public func configureRelay(_ configuration: TradeRelayConfiguration) async throws {
+        guard let task else { throw PriceCoreError.invalidServerResponse }
+        try await task.send(.data(JSONEncoder().encode(configuration)))
+    }
+
     private struct ResumeMessage: Encodable {
         let type: String
         let lastEventTime: [String: Int64]
@@ -213,6 +238,10 @@ public actor PriceStream {
     private func ping(_ task: URLSessionWebSocketTask) async throws {
         let gate = CompletionGate()
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            Task {
+                try? await Task.sleep(for: .seconds(8))
+                if gate.claim() { continuation.resume(throwing: URLError(.timedOut)) }
+            }
             task.sendPing { error in
                 guard gate.claim() else { return }
                 if let error {
@@ -222,6 +251,22 @@ public actor PriceStream {
                 }
             }
         }
+    }
+
+    /// A single socket handshake probes reachability without duplicating trade subscriptions.
+    public func probeDirect() async -> Bool {
+        var components = URLComponents(url: streamURL, resolvingAgainstBaseURL: false)!
+        components.path = "/ws"
+        components.query = nil
+        let socket = session.webSocketTask(with: components.url!)
+        socket.resume()
+        defer { socket.cancel(with: .normalClosure, reason: nil) }
+        do { try await ping(socket); return true } catch { return false }
+    }
+
+    public func checkConnection() async -> Bool {
+        guard let task else { return false }
+        do { try await ping(task); return true } catch { return false }
     }
 
     public func disconnect() {

@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Net.WebSockets;
 using System.Text;
+using System.Text.Json;
 
 namespace PriceReminder.Windows;
 
@@ -18,7 +19,15 @@ internal sealed class MonitorService : IDisposable
     private CancellationTokenSource? marketCancellation;
     private Task? monitorTask;
     private Task? processorTask;
-    private Task? marketTask;
+    private string subscriptionSignature = "";
+    private bool subscriptionRestart;
+    private readonly ConcurrentDictionary<string, byte> initialSymbols = new();
+    private long relayVersion;
+    private Dictionary<Guid,string> marketRuleKeys = new();
+    private HashSet<string> configuredSymbols = new();
+    private readonly HashSet<string> relayEventIds = new();
+    private bool HasMarketRules { get { lock(store.State) return store.State.MarketRules.Any(r=>r.Enabled); } }
+    private string SubscriptionSignature() => HasMarketRules ? "all" : string.Join(",", DesiredSymbols().Where(s=>s!=GoldQuote.Symbol).Order());
     private Task? goldTask;
     public GoldQuote? Gold { get; private set; }
     public string GoldStatus { get; private set; } = "等待黄金报价";
@@ -62,7 +71,7 @@ internal sealed class MonitorService : IDisposable
         SetStatus(false, true, "正在直连币安");
         monitorTask = Task.Run(() => MonitorLoopAsync(serviceCancellation.Token));
         processorTask = Task.Run(() => ProcessPricesAsync(serviceCancellation.Token));
-        marketTask = Task.Run(() => MarketLoopAsync(serviceCancellation.Token));
+
         goldTask = Task.Run(() => GoldLoopAsync(serviceCancellation.Token));
     }
 
@@ -82,8 +91,18 @@ internal sealed class MonitorService : IDisposable
 
     public void SubscriptionsChanged()
     {
+        lock(store.State) {
+            var keys=store.State.MarketRules.Where(r=>r.Enabled).ToDictionary(r=>r.Id,r=>$"{r.WindowMinutes}:{r.ThresholdText}");
+            marketScanner.RetainRules(keys.Keys.Where(id=>marketRuleKeys.TryGetValue(id,out var old)&&old==keys[id]).ToHashSet());
+            marketRuleKeys=keys;
+            var symbols=DesiredSymbols().ToHashSet();
+            foreach(var symbol in symbols.Except(configuredSymbols)){buffer.Remove(symbol);initialSymbols[symbol]=0;}
+            configuredSymbols=symbols;
+        }
+        var next = SubscriptionSignature();
+        if (next == subscriptionSignature) return;
+        subscriptionRestart = true;
         connectionCancellation?.Cancel();
-        marketCancellation?.Cancel();
     }
 
     public void InitializeRule(AlertRule rule)
@@ -101,67 +120,6 @@ internal sealed class MonitorService : IDisposable
                 new HashSet<string>(staleSymbols, StringComparer.OrdinalIgnoreCase),
                 lastReceivedAt, reconnectCount, lastError, subscribedCount,
                 marketMessage, marketContractCount, lastMarketReceivedAt);
-        }
-    }
-
-    private async Task MarketLoopAsync(CancellationToken cancellationToken)
-    {
-        while (!cancellationToken.IsCancellationRequested)
-        {
-            MarketAlertRule[] rules;
-            lock (store.State) rules = store.State.MarketRules.Where(rule => rule.Enabled).ToArray();
-            marketScanner.RetainRules(rules.Select(rule => rule.Id).ToHashSet());
-            if (rules.Length == 0)
-            {
-                lock (gate) { marketMessage = "全市场扫描未启用"; marketContractCount = 0; }
-                PublishState();
-                try { await Task.Delay(TimeSpan.FromSeconds(1), cancellationToken); } catch (OperationCanceledException) { return; }
-                continue;
-            }
-            marketCancellation?.Dispose();
-            marketCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            try
-            {
-                var contracts = await api.BinancePerpetualContractsAsync(marketCancellation.Token);
-                var validSymbols = contracts.Select(item => item.Symbol).ToHashSet(StringComparer.OrdinalIgnoreCase);
-                using var socket = api.CreateDirectSocket();
-                lock (gate) { marketMessage = "正在连接币安全市场行情"; marketContractCount = 0; }
-                PublishState();
-                await socket.ConnectAsync(api.AllMarketUri(), marketCancellation.Token);
-                lock (gate) { marketMessage = "全市场实时扫描中"; marketContractCount = validSymbols.Count; }
-                PublishState();
-                await ReceiveMessagesAsync(socket, json =>
-                {
-                    MarketAlertRule[] currentRules;
-                    lock (store.State) currentRules = store.State.MarketRules.Where(rule => rule.Enabled).ToArray();
-                    var triggers = ApiClient.DecodeMarketPrices(json)
-                        .Where(point => validSymbols.Contains(point.Symbol))
-                        .SelectMany(point => currentRules.SelectMany(rule => marketScanner.Evaluate(rule, point)))
-                        .ToArray();
-                    lock (gate) { lastMarketReceivedAt = DateTimeOffset.UtcNow; marketMessage = "全市场实时扫描中"; }
-                    if (triggers.Length == 0) return;
-                    lock (store.State)
-                    {
-                        foreach (var trigger in triggers)
-                            store.State.History.Insert(0, new TriggerHistory(
-                                $"{trigger.RuleId}:{trigger.Direction}:{trigger.EventTime}", trigger.Symbol,
-                                trigger.Kind, trigger.Direction, trigger.ChangePercent, trigger.WindowMinutes,
-                                trigger.ThresholdText, null, trigger.PriceText, trigger.EventTime));
-                        store.Save();
-                    }
-                    foreach (var group in triggers.GroupBy(item => (item.Symbol, item.EventTime)))
-                        Triggered?.Invoke(group.ToArray());
-                }, marketCancellation.Token);
-            }
-            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { return; }
-            catch (OperationCanceledException) { marketScanner.ResetAll(); }
-            catch (Exception error)
-            {
-                marketScanner.ResetAll();
-                lock (gate) { marketMessage = $"全市场扫描已中断：{ShortError(error)}"; marketContractCount = 0; }
-                PublishState();
-                try { await Task.Delay(TimeSpan.FromSeconds(5), cancellationToken); } catch (OperationCanceledException) { return; }
-            }
         }
     }
 
@@ -205,7 +163,13 @@ internal sealed class MonitorService : IDisposable
             try
             {
                 var symbols = DesiredSymbols().Where(s => s != GoldQuote.Symbol).ToArray();
-                if (symbols.Length == 0) { await Task.Delay(1000, cancellationToken); continue; }
+                if(symbols.Length>50){SetStatus(false,false,"最多订阅 50 个普通合约");await Task.Delay(1000,cancellationToken);continue;}
+                subscriptionSignature = SubscriptionSignature();
+                pendingPrices.Clear();
+                marketScanner.ResetAll();
+                initialSymbols.Clear();
+                foreach (var symbol in symbols) { buffer.Remove(symbol); initialSymbols[symbol] = 0; }
+                if (symbols.Length == 0 && !HasMarketRules) { await Task.Delay(1000, cancellationToken); continue; }
                 lock (gate) subscribedCount = symbols.Length;
                 if (source == ConnectionSource.Direct)
                 {
@@ -238,6 +202,7 @@ internal sealed class MonitorService : IDisposable
                     : $"服务端连接中断，5 秒后重新检测币安：{ShortError(error)}");
             }
 
+            if (subscriptionRestart) { subscriptionRestart = false; continue; }
             source = source == ConnectionSource.Direct ? ConnectionSource.Server : ConnectionSource.Direct;
             PublishState();
             if (source == ConnectionSource.Direct)
@@ -250,77 +215,87 @@ internal sealed class MonitorService : IDisposable
 
     private async Task ConsumeDirectAsync(IReadOnlyList<string> symbols, CancellationToken cancellationToken)
     {
-        using var socket = api.CreateDirectSocket();
-        using var directTimeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        directTimeout.CancelAfter(TimeSpan.FromSeconds(3));
-        try
-        {
-            await socket.ConnectAsync(api.DirectStreamUri(symbols), directTimeout.Token);
+        var all = HasMarketRules;
+        var requested = all ? (await api.BinancePerpetualContractsAsync(cancellationToken)).Select(c=>c.Symbol).ToArray() : symbols.ToArray();
+        lock(gate) { marketContractCount = all ? requested.Length : 0; marketMessage = all ? "本地全市场扫描 · 正在积累窗口" : "全市场扫描未启用"; }
+        using var group = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        async Task ConsumeChunk(string[] chunk) {
+            using var socket = api.CreateDirectSocket();
+            await socket.ConnectAsync(api.DirectStreamUri(chunk),group.Token);
+            SetStatus(true, IsWarmingUp(), "直连币安 · 实时监控中");
+            await ReceiveMessagesAsync(socket, json => {
+                if(group.IsCancellationRequested)return;
+                var point = ApiClient.DecodeDirectPrice(json); if(point is null)return;
+                lock(gate) {lastReceivedAt=DateTimeOffset.UtcNow;lastError=null; if(all)lastMarketReceivedAt=lastReceivedAt;}
+                pendingPrices.AddOrUpdate(point.Symbol,point,(_,old)=>point.EventTime>old.EventTime?point:old);
+            },group.Token);
         }
-        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
-        {
-            throw new TimeoutException("3 秒内未连接成功");
-        }
-        var lastValidPriceAt = DateTimeOffset.UtcNow;
-        SetStatus(true, IsWarmingUp(), "直连币安 · 实时监控中");
-        using var silence = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        var watchdog = Task.Run(async () =>
-        {
-            while (!silence.Token.IsCancellationRequested)
-            {
-                await Task.Delay(TimeSpan.FromSeconds(1), silence.Token);
-                if (DateTimeOffset.UtcNow - lastValidPriceAt >= TimeSpan.FromSeconds(3))
-                    throw new TimeoutException("3 秒内未收到有效行情");
-            }
-        }, silence.Token);
-        var receiver = ReceiveMessagesAsync(socket, json =>
-        {
-            var point = ApiClient.DecodeDirectPrice(json);
-            if (point is null) return;
-            lastValidPriceAt = DateTimeOffset.UtcNow;
-            lock (gate)
-            {
-                lastReceivedAt = lastValidPriceAt;
-                lastError = null;
-            }
-            pendingPrices[point.Symbol] = point;
-        }, cancellationToken);
+        var tasks=requested.Chunk(150).Select(ConsumeChunk).ToArray();
+        try { await await Task.WhenAny(tasks); } finally { group.Cancel(); try{await Task.WhenAll(tasks);}catch{} }
+    }
 
-        var completed = await Task.WhenAny(receiver, watchdog);
-        silence.Cancel();
-        await completed;
-        if (completed == receiver) await receiver;
+    private string RelayConfiguration(long version) {
+        lock(store.State) return JsonSerializer.Serialize(new {type="configure",protocol=2,version,
+            symbols=DesiredSymbols().Where(s=>s!=GoldQuote.Symbol).Order().ToArray(),
+            marketRules=store.State.MarketRules.Where(r=>r.Enabled).OrderBy(r=>r.Id).Select(r=>new {id=r.Id,windowMinutes=r.WindowMinutes,thresholdText=r.ThresholdText,isEnabled=true}).ToArray()});
     }
 
     private async Task ConsumeServerAsync(IReadOnlyList<string> symbols, CancellationToken cancellationToken)
     {
-        var relay = await api.CreateServerSocketAsync(symbols, cancellationToken);
-        using var socket = relay.Socket;
-        await socket.ConnectAsync(relay.Uri, cancellationToken);
-        var resume = ApiClient.ResumeMessage(symbols.ToDictionary(
-            symbol => symbol, symbol => buffer.Latest(symbol)?.EventTime ?? 0L, StringComparer.OrdinalIgnoreCase));
-        await socket.SendAsync(Encoding.UTF8.GetBytes(resume), WebSocketMessageType.Text, true, cancellationToken);
-        var connectedAt = DateTimeOffset.UtcNow;
-        await ReceiveMessagesAsync(socket, json =>
-        {
-            var envelope = ApiClient.DecodeRelay(json);
-            switch (envelope.Type)
-            {
-                case "ready": SetStatus(true, IsWarmingUp(), "服务端币安行情 · 实时监控中"); break;
-                case "status": SetStatus(true, true, "服务端币安行情 · 正在补齐价格"); break;
-                case "price" when envelope.Symbol is not null && envelope.Price is not null && envelope.EventTime is not null:
-                    lock (gate)
-                    {
-                        lastReceivedAt = DateTimeOffset.UtcNow;
-                        lastError = null;
-                    }
-                    pendingPrices[envelope.Symbol] = new PricePoint(
-                        envelope.Symbol, envelope.Price, envelope.EventTime.Value, envelope.Replay);
-                    break;
+        var relay=await api.CreateServerSocketAsync(symbols,cancellationToken);
+        using var socket=relay.Socket;
+        await socket.ConnectAsync(relay.Uri,cancellationToken);
+        using var session=CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        var lastConfig="";
+        var retryAt=DateTimeOffset.UtcNow.AddMinutes(5);
+        var sender=Task.Run(async()=>{
+            while(!session.IsCancellationRequested) {
+                if(DateTimeOffset.UtcNow>=retryAt) {
+                    retryAt=DateTimeOffset.UtcNow.AddMinutes(5);
+                    using var probe=api.CreateDirectSocket();
+                    using var timeout=CancellationTokenSource.CreateLinkedTokenSource(session.Token);
+                    timeout.CancelAfter(TimeSpan.FromSeconds(8));
+                    try {
+                        await probe.ConnectAsync(new Uri("wss://fstream.binance.com/ws"),timeout.Token);
+                        throw new DirectAvailableException();
+                    } catch(DirectAvailableException){throw;} catch when(!session.IsCancellationRequested){}
+                }
+                var signature=RelayConfiguration(0);
+                if(signature!=lastConfig) {
+                    var version=Interlocked.Increment(ref relayVersion);
+                    await socket.SendAsync(Encoding.UTF8.GetBytes(RelayConfiguration(version)),WebSocketMessageType.Text,true,session.Token);
+                    lastConfig=signature;
+                }
+                await Task.Delay(1000,session.Token);
             }
-            if (DateTimeOffset.UtcNow - connectedAt >= TimeSpan.FromMinutes(5))
-                connectionCancellation?.Cancel();
-        }, cancellationToken);
+        },session.Token);
+        var receiver=ReceiveMessagesAsync(socket,json=>{
+            if(session.IsCancellationRequested)return;
+            var batch=TradeRelayBatch.Parse(json);
+            if(batch.Protocol!=2)throw new InvalidDataException("服务器不支持行情协议 v2");
+            if(batch.Version!=Interlocked.Read(ref relayVersion))return;
+            lock(gate) {lastReceivedAt=DateTimeOffset.UtcNow;lastError=null;marketMessage=HasMarketRules?"服务端全市场扫描中":"全市场扫描未启用";}
+            if(HasMarketRules && batch.LatestEventTime>0 && DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()-batch.LatestEventTime>60000)throw new TimeoutException("服务端行情停滞");
+            SetStatus(true,IsWarmingUp(),"服务端币安行情 · 实时监控中");
+            foreach(var p in batch.Prices)pendingPrices[p.Symbol]=new PricePoint(p.Symbol,p.Price,p.EventTime);
+            if(batch.EventId is not null && relayEventIds.Add(batch.EventId)) {
+                var alerts=batch.Triggers.Select(t=>t.Convert()).Where(t=>{lock(store.State)return store.State.MarketRules.Any(r=>r.Enabled&&r.Id==t.RuleId);}).ToArray();
+                RecordMarketAlerts(alerts);
+                if(relayEventIds.Count>2000){relayEventIds.Clear();relayEventIds.Add(batch.EventId);}
+            }
+        },session.Token);
+        try{await await Task.WhenAny(sender,receiver);}finally{session.Cancel();try{await Task.WhenAll(sender,receiver);}catch{}}
+    }
+
+    private sealed class DirectAvailableException : Exception {}
+
+    private void RecordMarketAlerts(IReadOnlyList<AlertTrigger> triggers) {
+        if(triggers.Count==0)return;
+        lock(store.State) {
+            foreach(var t in triggers)store.State.History.Insert(0,new TriggerHistory($"{t.RuleId}:{t.Direction}:{t.EventTime}",t.Symbol,t.Kind,t.Direction,t.ChangePercent,t.WindowMinutes,t.ThresholdText,null,t.PriceText,t.EventTime));
+            store.Save();
+        }
+        foreach(var group in triggers.GroupBy(t=>(t.Symbol,t.EventTime)))Triggered?.Invoke(group.ToArray());
     }
 
     private static async Task ReceiveMessagesAsync(
@@ -349,7 +324,16 @@ internal sealed class MonitorService : IDisposable
         {
             foreach (var entry in pendingPrices.OrderBy(item => item.Key).ToArray())
             {
-                if (!pendingPrices.TryRemove(entry.Key, out var point) || !buffer.Add(point)) continue;
+                if (!pendingPrices.TryRemove(entry.Key, out var point)) continue;
+                if(source==ConnectionSource.Direct && HasMarketRules) {
+                    AlertTrigger[] alerts;
+                    lock(store.State) alerts=store.State.MarketRules.Where(r=>r.Enabled).SelectMany(r=>marketScanner.Evaluate(r,point)).ToArray();
+                    RecordMarketAlerts(alerts);
+                }
+                if(!DesiredSymbols().Contains(point.Symbol) || !buffer.Add(point))continue;
+                if(initialSymbols.TryRemove(point.Symbol,out _)) {
+                    lock(store.State) foreach(var rule in store.State.Rules.Where(r=>r.Symbol==point.Symbol))RuleEngine.Initialize(rule,point,buffer);
+                }
                 lock (gate) latestPrices[point.Symbol] = point;
                 if (!point.Replay) Evaluate(point);
             }
@@ -389,7 +373,7 @@ internal sealed class MonitorService : IDisposable
         {
             return store.State.Rules.Where(rule => rule.Enabled).Select(rule => rule.Symbol)
                 .Concat(store.State.TraySymbols).Append(store.State.PrimarySymbol)
-                .Distinct(StringComparer.OrdinalIgnoreCase).Take(50).ToArray();
+                .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
         }
     }
 

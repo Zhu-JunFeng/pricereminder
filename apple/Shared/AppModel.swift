@@ -106,11 +106,16 @@ final class AppModel: ObservableObject {
     @Published private(set) var goldStatus = "等待黄金报价"
     @Published private(set) var goldFeedAvailable = false
     private var goldTask: Task<Void, Never>?
+    private var goldSubscribed = false
     func displaySymbol(_ symbol: String) -> String { symbol == GoldQuote.symbol ? "上海黄金 Au99.99" : symbol }
     private var binanceSymbols: [String] { desiredSymbols.filter { $0 != GoldQuote.symbol } }
     private func connectGold() {
+        let wanted = desiredSymbols.contains(GoldQuote.symbol)
+        if wanted == goldSubscribed, goldTask != nil { return }
+        goldSubscribed = wanted
         goldTask?.cancel()
-        guard desiredSymbols.contains(GoldQuote.symbol) else { return }
+        goldTask = nil
+        guard wanted else { return }
         goldTask = Task {
             var last: Int64 = 0
             var initialize = true
@@ -171,6 +176,15 @@ final class AppModel: ObservableObject {
     private var relayRetryTask: Task<Void, Never>?
     private var watchdogTask: Task<Void, Never>?
     private var priceFlushTask: Task<Void, Never>?
+    private var connectionSignature: String?
+    private var connectionGeneration = UUID()
+    private var relayVersion: Int64 = 0
+    private var relayConfigurationKey: Data?
+    private var configuredSymbols = Set<String>()
+    private var marketRuleKeys: [UUID: String] = [:]
+    private var relayEvents = Set<String>()
+    private var initialPriceSymbols = Set<String>()
+    private var hasMarketRules: Bool { marketRules.contains(where: \.isEnabled) }
     private var pendingPrices: [String: PricePoint] = [:]
     private var lastReceivedAt: Date?
     private var connectionStartedAt: Date?
@@ -266,8 +280,11 @@ final class AppModel: ObservableObject {
     func stopMonitoring() {
         persistAllPrices()
         monitoringEnabled = false
+        connectionSignature = nil
+        connectionGeneration = UUID()
         resetPriceTrends()
         goldTask?.cancel()
+        goldTask = nil
         streamTask?.cancel()
         relayRetryTask?.cancel()
         watchdogTask?.cancel()
@@ -638,6 +655,7 @@ final class AppModel: ObservableObject {
         foregroundLeaseTask = nil
         await iosBackgroundService.enterBackground()
         goldTask?.cancel()
+        goldTask = nil
         streamTask?.cancel()
         relayRetryTask?.cancel()
         watchdogTask?.cancel()
@@ -656,7 +674,21 @@ final class AppModel: ObservableObject {
 
     private func connect() {
         connectGold()
-        if binanceSymbols.isEmpty {
+        guard binanceSymbols.count <= 50 else { statusMessage = "最多订阅 50 个普通合约"; return }
+        let added = Set(binanceSymbols).subtracting(configuredSymbols)
+        initialPriceSymbols.formUnion(added)
+        for symbol in added { buffer.remove(symbol: symbol) }
+        configuredSymbols = Set(binanceSymbols)
+        let signature = hasMarketRules ? "all:\(validMarketSymbols.count)" : binanceSymbols.sorted().joined(separator: ",")
+        if connectionSignature == signature, streamTask?.isCancelled == false {
+            for symbol in binanceSymbols where buffer.latest(symbol: symbol) == nil { initialPriceSymbols.insert(symbol) }
+            if usingServerRelay { sendRelayConfiguration() }
+            return
+        }
+        connectionSignature = signature
+        connectionGeneration = UUID()
+        let generation = connectionGeneration
+        if binanceSymbols.isEmpty && !hasMarketRules {
             streamTask?.cancel(); watchdogTask?.cancel()
             Task { await stream.disconnect() }
             return
@@ -673,13 +705,20 @@ final class AppModel: ObservableObject {
         pendingPrices.removeAll()
         streamTask = Task {
             var relayNext = false
-            while !Task.isCancelled {
+            while !Task.isCancelled, generation == connectionGeneration {
                 do {
                     relayRetryTask?.cancel()
                     connectionStartedAt = Date()
                     lastReceivedAt = nil
                     monitorState = .connecting
                     usingServerRelay = relayNext
+                    pendingPrices.removeAll()
+                    priceFlushTask?.cancel()
+                    priceFlushTask = nil
+                    marketScanner.resetAll()
+                    initialPriceSymbols = Set(binanceSymbols)
+                    for symbol in binanceSymbols { buffer.remove(symbol: symbol) }
+                    marketStatusMessage = hasMarketRules ? "正在重新积累全市场窗口" : "全市场扫描未启用"
                     statusMessage = relayNext ? "正在连接服务端行情" : "正在直连币安"
                     let updates: AsyncThrowingStream<PriceStreamEvent, Error>
                     if relayNext {
@@ -690,26 +729,55 @@ final class AppModel: ObservableObject {
                         let platform = "macos"
                         let displayName = "Mac"
                         #endif
-                        let relay = try await ServerConnectionService.shared.prepareStream(
-                            symbols: binanceSymbols, platform: platform, displayName: displayName
-                        )
-                        updates = try await stream.connect(
-                            serverURL: relay.url, token: relay.token,
-                            lastEventTimes: Dictionary(uniqueKeysWithValues: binanceSymbols.map {
-                                ($0, buffer.latest(symbol: $0)?.eventTime ?? 0)
-                            })
-                        )
+                        let api = try await ServerConnectionService.shared.authenticatedClient(platform: platform, displayName: displayName)
+                        var components = URLComponents(url: try ServerConnectionService.serverURL().appendingPathComponent("v2/stream"), resolvingAgainstBaseURL: false)!
+                        components.scheme = components.scheme == "http" ? "ws" : "wss"
+                        guard !Task.isCancelled, generation == connectionGeneration else { return }
+                        relayVersion += 1
+                        relayConfigurationKey = relayKey()
+                        updates = try await stream.connectRelay(url: components.url!, token: try await api.bearerToken(), configuration: TradeRelayConfiguration(version: relayVersion, symbols: binanceSymbols, marketRules: marketRules))
                         relayRetryTask = Task {
-                            try? await Task.sleep(for: .seconds(300))
-                            guard !Task.isCancelled else { return }
-                            await stream.disconnect()
+                            while !Task.isCancelled {
+                                try? await Task.sleep(for: .seconds(300))
+                                guard !Task.isCancelled, generation == connectionGeneration else { return }
+                                if await stream.probeDirect() {
+                                    guard !Task.isCancelled, generation == connectionGeneration else { return }
+                                    await stream.disconnect()
+                                    return
+                                }
+                            }
                         }
+                    } else if hasMarketRules {
+                        let batches = try await stream.connectAllMarket(symbols: Array(validMarketSymbols))
+                        for try await batch in batches {
+                            guard !Task.isCancelled, generation == connectionGeneration else { return }
+                            lastReceivedAt = Date()
+                            lastMarketReceivedAt = Date()
+                            marketContractCount = validMarketSymbols.count
+                            marketStatusMessage = "本地全市场实时扫描中"
+                            for point in batch {
+                                evaluateMarket(point)
+                                if binanceSymbols.contains(point.symbol) { receiveInitialOrLive(point) }
+                            }
+                        }
+                        throw PriceCoreError.invalidExchangeResponse
                     } else {
                         updates = try await stream.connect(symbols: binanceSymbols)
                     }
                     for try await event in updates {
-                        guard !Task.isCancelled else { return }
+                        guard !Task.isCancelled, generation == connectionGeneration else { return }
                         switch event {
+                        case .relay(let batch):
+                            guard batch.version == relayVersion else { continue }
+                            lastReceivedAt = Date()
+                            if batch.type == "configured" { monitorState = .live; statusMessage = "服务端行情已连接"; marketStatusMessage = hasMarketRules ? "服务端全市场扫描 · 正在积累窗口" : "全市场扫描未启用" }
+                            if hasMarketRules, batch.latestEventTime > 0, Int64(Date().timeIntervalSince1970 * 1000) - batch.latestEventTime > 60_000 { throw PriceCoreError.invalidExchangeResponse }
+                            for wire in batch.prices ?? [] { receiveInitialOrLive(try wire.point()) }
+                            if let id = batch.eventId, relayEvents.insert(id).inserted {
+                                record(batch.alerts().filter { alert in marketRules.contains { $0.id == alert.ruleID && $0.isEnabled } })
+                                if relayEvents.count > 2000 { relayEvents = [id] }
+                            }
+                            if hasMarketRules { lastMarketReceivedAt = Date(); marketContractCount = validMarketSymbols.count }
                         case .price(let point): enqueue(point)
                         case .warmingUp:
                             updateReadiness()
@@ -719,7 +787,7 @@ final class AppModel: ObservableObject {
                     }
                 } catch {
                     relayRetryTask?.cancel()
-                    guard !Task.isCancelled else { return }
+                    guard !Task.isCancelled, generation == connectionGeneration else { return }
                     resetPriceTrends()
                     reconnectCount += 1
                     lastConnectionError = error.localizedDescription
@@ -744,7 +812,11 @@ final class AppModel: ObservableObject {
                 if elapsed >= 30 {
                     resetPriceTrends()
                 }
-                if elapsed >= 3, !usingServerRelay {
+                if elapsed >= 60, !usingServerRelay {
+                    if !hasMarketRules, await stream.checkConnection() {
+                        lastReceivedAt = Date()
+                        continue
+                    }
                     statusMessage = "币安直连无有效行情，正在切换服务端"
                     await stream.disconnect()
                 } else if elapsed >= 60, !connectionFailureNotified {
@@ -761,44 +833,41 @@ final class AppModel: ObservableObject {
         }
     }
 
-    private func connectMarketIfNeeded() {
-        marketStreamTask?.cancel()
-        marketScanner.resetAll()
-        guard monitoringEnabled, marketRules.contains(where: \.isEnabled) else {
-            Task { await marketStream.disconnect() }
-            marketStatusMessage = "全市场扫描未启用"
-            marketContractCount = 0
-            return
-        }
-        guard !validMarketSymbols.isEmpty else {
-            Task { await marketStream.disconnect() }
-            marketStatusMessage = "币安全市场合约目录不可用"
-            marketContractCount = 0
-            return
-        }
-        marketStreamTask = Task {
-            await marketStream.disconnect()
-            while !Task.isCancelled {
-                do {
-                    marketStatusMessage = "正在连接币安全市场行情"
-                    let updates = try await marketStream.connectAllMarket(symbols: Array(validMarketSymbols))
-                    for try await batch in updates {
-                        guard !Task.isCancelled else { return }
-                        let accepted = batch.filter { validMarketSymbols.contains($0.symbol) }
-                        lastMarketReceivedAt = Date()
-                        marketContractCount = validMarketSymbols.count
-                        marketStatusMessage = "全市场实时扫描中"
-                        for point in accepted { evaluateMarket(point) }
-                    }
-                } catch {
-                    guard !Task.isCancelled else { return }
-                    marketScanner.resetAll()
-                    marketContractCount = 0
-                    marketStatusMessage = "全市场扫描已中断：\(error.localizedDescription)"
-                    try? await Task.sleep(for: .seconds(5))
-                }
+    private func relayKey() -> Data? {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .sortedKeys
+        return try? encoder.encode(TradeRelayConfiguration(version: 0, symbols: binanceSymbols, marketRules: marketRules))
+    }
+
+    private func sendRelayConfiguration() {
+        let key = relayKey()
+        guard key != relayConfigurationKey else { return }
+        relayConfigurationKey = key
+        relayVersion += 1
+        let configuration = TradeRelayConfiguration(version: relayVersion, symbols: binanceSymbols, marketRules: marketRules)
+        let generation = connectionGeneration
+        Task {
+            guard generation == connectionGeneration, configuration.version == relayVersion, usingServerRelay else { return }
+            do { try await stream.configureRelay(configuration) }
+            catch {
+                guard generation == connectionGeneration, usingServerRelay else { return }
+                await stream.disconnect()
             }
         }
+    }
+
+    private func connectMarketIfNeeded() {
+        if monitoringEnabled { connect() }
+    }
+
+    private func receiveInitialOrLive(_ point: PricePoint) {
+        if initialPriceSymbols.remove(point.symbol) != nil {
+            buffer.add(point)
+            for index in rules.indices where rules[index].symbol == point.symbol {
+                _ = RuleEngine.initialize(rule: &rules[index], current: point, buffer: buffer)
+            }
+        }
+        receive(point)
     }
 
     private func enqueue(_ point: PricePoint) {
@@ -810,7 +879,7 @@ final class AppModel: ObservableObject {
                 guard !Task.isCancelled else { return }
                 let points = pendingPrices.values.sorted { $0.symbol < $1.symbol }
                 pendingPrices.removeAll()
-                points.forEach(receive)
+                points.forEach(receiveInitialOrLive)
                 if pendingPrices.isEmpty {
                     priceFlushTask = nil
                     return
@@ -946,7 +1015,9 @@ final class AppModel: ObservableObject {
     }
 
     private func marketRulesDidChange() {
-        marketScanner.retainRules(Set(marketRules.filter(\.isEnabled).map(\.id)))
+        let keys = Dictionary(uniqueKeysWithValues: marketRules.filter(\.isEnabled).map { ($0.id, "\($0.windowMinutes):\($0.thresholdText)") })
+        marketScanner.retainRules(Set(keys.keys.filter { keys[$0] == marketRuleKeys[$0] }))
+        marketRuleKeys = keys
         connectMarketIfNeeded()
         #if os(iOS)
         Task { await syncIOSBackgroundConfiguration() }
@@ -958,7 +1029,7 @@ final class AppModel: ObservableObject {
         #if os(macOS)
         return Array(Set(enabledRuleSymbols + menuSymbols + [primarySymbol] + positions.map { $0.setting.symbol })).sorted()
         #else
-        return Array(Set(enabledRuleSymbols + menuSymbols + [primarySymbol])).sorted().prefix(50).map { $0 }
+        return Array(Set(enabledRuleSymbols + menuSymbols + [primarySymbol])).sorted()
         #endif
     }
 

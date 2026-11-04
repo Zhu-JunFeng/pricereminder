@@ -18,6 +18,7 @@ class ApiClient(
     val http = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(30, TimeUnit.SECONDS)
+        .pingInterval(20, TimeUnit.SECONDS)
         .build()
     val json = Json { ignoreUnknownKeys = true }
 
@@ -29,6 +30,16 @@ class ApiClient(
             check(it.isSuccessful) { "黄金行情暂不可用" }
             json.decodeFromString<GoldQuote>(it.body?.string().orEmpty())
         }
+    }
+
+    suspend fun probeDirect(): Boolean = withContext(Dispatchers.IO) {
+        val done=java.util.concurrent.CountDownLatch(1)
+        val connected=java.util.concurrent.atomic.AtomicBoolean(false)
+        val socket=http.newWebSocket(Request.Builder().url("wss://fstream.binance.com/ws").build(),object:okhttp3.WebSocketListener(){
+            override fun onOpen(ws:okhttp3.WebSocket,response:okhttp3.Response){connected.set(true);done.countDown()}
+            override fun onFailure(ws:okhttp3.WebSocket,t:Throwable,response:okhttp3.Response?){done.countDown()}
+        })
+        try { done.await(8,TimeUnit.SECONDS); connected.get() } finally { socket.cancel() }
     }
 
     suspend fun binanceContracts(): List<ContractDto> = directContracts()
@@ -67,15 +78,7 @@ class ApiClient(
 
     suspend fun serverStreamRequest(symbols: List<String>): Request = withContext(Dispatchers.IO) {
         val token = authenticatedToken()
-        val body = json.encodeToString(
-            SubscriptionsResponse.serializer(), SubscriptionsResponse(symbols.distinct().sorted())
-        ).toRequestBody(JSON_MEDIA_TYPE)
-        http.newCall(
-            Request.Builder().url("$serverBaseUrl/v1/subscriptions")
-                .header("Authorization", "Bearer $token")
-                .put(body).build()
-        ).execute().use { check(it.isSuccessful) { "服务端订阅失败：HTTP ${it.code}" } }
-        Request.Builder().url(serverBaseUrl.replaceFirst("https://", "wss://") + "/v1/stream")
+        Request.Builder().url(serverBaseUrl.replaceFirst("https://", "wss://") + "/v2/stream")
             .header("Authorization", "Bearer $token").build()
     }
 
