@@ -39,15 +39,31 @@ private struct MenuBarLabel: View {
     @EnvironmentObject private var model: AppModel
 
     var body: some View {
+        MenuBarPriceContents(items: model.menuSymbols.prefix(3).map { symbol in
+            let name = symbol == GoldQuote.symbol ? "黄金" : (symbol.hasSuffix("USDT") ? String(symbol.dropLast(4)) : symbol)
+            return MenuBarPriceItem(
+                text: "\(name) \(compactPrice(model.prices[symbol]?.priceText ?? "--"))",
+                trend: model.consecutivePriceTrends[symbol]
+            )
+        }).equatable()
+    }
+}
+
+private struct MenuBarPriceItem: Equatable {
+    let text: String
+    let trend: ConsecutivePriceTrend?
+}
+
+private struct MenuBarPriceContents: View, Equatable {
+    let items: [MenuBarPriceItem]
+
+    var body: some View {
         HStack(spacing: 5) {
-            ForEach(Array(model.menuSymbols.prefix(3).enumerated()), id: \.element) { index, symbol in
-                if index > 0 {
-                    Text("·").foregroundStyle(.secondary)
-                }
+            ForEach(Array(items.enumerated()), id: \.offset) { index, item in
+                if index > 0 { Text("·").foregroundStyle(.secondary) }
                 HStack(spacing: 2) {
-                    let shortSymbol = symbol == GoldQuote.symbol ? "黄金" : (symbol.hasSuffix("USDT") ? String(symbol.dropLast(4)) : symbol)
-                    Text("\(shortSymbol) \(compactPrice(model.prices[symbol]?.priceText ?? "--"))")
-                    PriceTrendArrow(trend: model.consecutivePriceTrends[symbol], size: 7)
+                    Text(item.text)
+                    PriceTrendArrow(trend: item.trend, size: 7)
                 }
             }
         }
@@ -66,11 +82,26 @@ struct MenuPanel: View {
     @EnvironmentObject private var model: AppModel
     @Environment(\.openSettings) private var openSettings
     @State private var contentHeight: CGFloat = 0
+    @State private var panelVisible = false
 
     var body: some View {
+        Group {
+            if panelVisible {
+                TimelineView(.periodic(from: .now, by: 1)) { context in
+                    panel(at: context.date)
+                }
+            } else {
+                panel(at: Date())
+            }
+        }
+        .onAppear { panelVisible = true }
+        .onDisappear { panelVisible = false }
+    }
+
+    private func panel(at now: Date) -> some View {
         VStack(alignment: .leading, spacing: 0) {
-            TimelineView(.periodic(from: .now, by: 1)) { context in
-                let status = model.panelMonitoringStatus(at: context.date)
+            Group {
+                let status = model.panelMonitoringStatus(at: now)
                 HStack {
                     Text(status.text).font(.caption).foregroundStyle(.secondary)
                     Spacer()
@@ -84,7 +115,7 @@ struct MenuPanel: View {
             ScrollView {
                 VStack(spacing: 0) {
                     ForEach(model.panelSymbols, id: \.self) { symbol in
-                        MenuPriceRow(symbol: symbol).padding(.horizontal, 16).padding(.vertical, 12)
+                        MenuPriceRow(symbol: symbol, now: now).padding(.horizontal, 16).padding(.vertical, 12)
                         Divider()
                     }
                 }
@@ -125,6 +156,7 @@ struct MenuPanel: View {
 private struct MenuPriceRow: View {
     @EnvironmentObject private var model: AppModel
     let symbol: String
+    let now: Date
 
     var body: some View {
         VStack(alignment: .leading, spacing: 5) {
@@ -137,12 +169,12 @@ private struct MenuPriceRow: View {
                     PriceTrendArrow(trend: model.consecutivePriceTrends[symbol], size: 9)
                 }
             }
-            TimelineView(.periodic(from: .now, by: 1)) { context in
+            Group {
                 HStack {
                     Text(symbol == GoldQuote.symbol ? "日涨幅 · 相对昨收 · 元/克" : "24h 涨幅 · 北京时间 00:00 起").foregroundStyle(.secondary)
                     Spacer()
-                    if let change = model.dailyChange(symbol: symbol, now: context.date) {
-                        let stale = model.prices[symbol].map { model.isPriceStale($0, now: context.date) } ?? true
+                    if let change = model.dailyChange(symbol: symbol, now: now) {
+                        let stale = model.prices[symbol].map { model.isPriceStale($0, now: now) } ?? true
                         Text(stale ? "\(change.percentageText) · 价格已陈旧" : change.percentageText)
                             .foregroundStyle(stale ? Color.secondary : color(for: change.direction))
                     } else {
@@ -153,8 +185,8 @@ private struct MenuPriceRow: View {
                 .font(.caption)
                 .numericPriceStyle()
                 .help(symbol == GoldQuote.symbol ? "相对上一交易日收盘价计算，不含杠杆。" : "北京时间每日 00:00 起，按该分钟 K 线开盘价计算，不含杠杆；非滚动 24 小时涨幅。")
-                .task(id: "\(symbol):\(BeijingDailyPrice.startMilliseconds(at: context.date))") {
-                    await model.loadDailyOpen(symbol: symbol, start: BeijingDailyPrice.startMilliseconds(at: context.date))
+                .task(id: "\(symbol):\(BeijingDailyPrice.startMilliseconds(at: now))") {
+                    await model.loadDailyOpen(symbol: symbol, start: BeijingDailyPrice.startMilliseconds(at: now))
                 }
             }
             if symbol == GoldQuote.symbol {
@@ -164,9 +196,9 @@ private struct MenuPriceRow: View {
                         .font(.caption2).foregroundStyle(.secondary)
                 }
             }
-            TimelineView(.periodic(from: .now, by: 1)) { context in
+            Group {
                 let point = model.prices[symbol]
-                let stale = point.map { model.isPriceStale($0, now: context.date) } ?? true
+                let stale = point.map { model.isPriceStale($0, now: now) } ?? true
                 VStack(alignment: .leading, spacing: 5) {
                     ForEach(model.positions.filter { $0.setting.symbol == symbol }) { position in
                         let setting = position.setting

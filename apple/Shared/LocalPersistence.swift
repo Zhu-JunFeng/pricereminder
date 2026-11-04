@@ -51,7 +51,16 @@ struct TriggerRecord: Codable, Identifiable, Hashable {
 }
 
 enum LocalPersistence {
-    private static let encoder = JSONEncoder()
+    private static let encoder: JSONEncoder = {
+        let encoder = JSONEncoder()
+        #if os(macOS)
+        encoder.outputFormatting = [.sortedKeys]
+        #endif
+        return encoder
+    }()
+    #if os(macOS)
+    private static let snapshotWriter = AtomicSnapshotWriter()
+    #endif
     private static let decoder = JSONDecoder()
 
     static func loadRules() -> [AlertRule] { load("rules.json") }
@@ -78,8 +87,12 @@ enum LocalPersistence {
     static func savePrices(_ points: [PricePoint], symbol: String) {
         guard symbol.range(of: "^[A-Z0-9]{2,30}$", options: .regularExpression) != nil,
               let data = try? encoder.encode(points) else { return }
+        #if os(macOS)
+        try? snapshotWriter.write(data, to: priceDirectory.appending(path: "\(symbol).json"))
+        #else
         try? FileManager.default.createDirectory(at: priceDirectory, withIntermediateDirectories: true)
         try? data.write(to: priceDirectory.appending(path: "\(symbol).json"), options: .atomic)
+        #endif
     }
 
     private static func load<T: Decodable>(_ name: String) -> [T] {
@@ -90,8 +103,12 @@ enum LocalPersistence {
 
     private static func save<T: Encodable>(_ values: [T], name: String) {
         guard let data = try? encoder.encode(values) else { return }
+        #if os(macOS)
+        try? snapshotWriter.write(data, to: file(name))
+        #else
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         try? data.write(to: file(name), options: .atomic)
+        #endif
     }
 
     static var directory: URL {

@@ -7,6 +7,38 @@ func expect(_ condition: @autoclosure () -> Bool, _ message: String) throws {
     if !condition() { throw CheckError.failed(message) }
 }
 
+func snapshotWriterChecks() throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let url = directory.appendingPathComponent("rules.json")
+    let writer = AtomicSnapshotWriter()
+    let first = Data("first".utf8)
+    let wroteFirst = try writer.write(first, to: url)
+    try expect(wroteFirst, "first snapshot must be persisted")
+    var redundantWrites = 0
+    for _ in 0..<1000 {
+        if try writer.write(first, to: url) { redundantWrites += 1 }
+    }
+    try expect(redundantWrites == 0, "unchanged snapshots must not write")
+    let restarted = AtomicSnapshotWriter()
+    let wroteAgain = try restarted.write(first, to: url)
+    try expect(!wroteAgain, "restart must recognize unchanged disk snapshot")
+    let next = Data("next".utf8)
+    let wroteNext = try writer.write(next, to: url)
+    try expect(wroteNext, "changed state must persist immediately")
+    let restored = try Data(contentsOf: url)
+    try expect(restored == next, "latest snapshot must survive reload")
+    let parent = directory.appendingPathComponent("blocked")
+    try first.write(to: parent)
+    let retryURL = parent.appendingPathComponent("rules.json")
+    var failed = false
+    do { try writer.write(next, to: retryURL) } catch { failed = true }
+    try expect(failed, "write failure must not become cached success")
+    try FileManager.default.removeItem(at: parent)
+    let retried = try writer.write(next, to: retryURL)
+    try expect(retried, "failed snapshot must retry")
+}
+
 func goldQuoteChecks() throws {
     let json = #"{"price":"847","previousClose":"836.08","eventTime":1793675585000,"receivedAt":1793675609000,"state":"stale","source":"新浪财经"}"#
     let quote = try JSONDecoder().decode(GoldQuote.self, from: Data(json.utf8))
@@ -307,6 +339,7 @@ func positionPersistenceChecks() throws {
 }
 
 do {
+    try snapshotWriterChecks()
     try goldQuoteChecks()
     try positionPersistenceChecks()
     try dailyBaselineUsesBeijingMidnight()

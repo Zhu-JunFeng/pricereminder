@@ -833,7 +833,7 @@ final class AppModel: ObservableObject {
             return
         }
         updatePriceTrend(with: point)
-        monitorState = .live
+        if monitorState != .live { monitorState = .live }
         evaluate(point)
         persistPriceIfDue(point)
         updateReadiness()
@@ -847,7 +847,12 @@ final class AppModel: ObservableObject {
 
     private func persistPriceIfDue(_ point: PricePoint) {
         let last = lastPersistedEventTimes[point.symbol] ?? 0
-        guard point.eventTime - last >= 15_000 else { return }
+        #if os(macOS)
+        let interval: Int64 = 60_000
+        #else
+        let interval: Int64 = 15_000
+        #endif
+        guard point.eventTime - last >= interval else { return }
         LocalPersistence.savePrices(buffer.points(symbol: point.symbol), symbol: point.symbol)
         lastPersistedEventTimes[point.symbol] = point.eventTime
     }
@@ -856,7 +861,7 @@ final class AppModel: ObservableObject {
         var tracker = priceTrendTrackers[point.symbol] ?? ConsecutivePriceTrendTracker()
         let trend = tracker.update(price: point.price)
         priceTrendTrackers[point.symbol] = tracker
-        consecutivePriceTrends[point.symbol] = trend
+        if consecutivePriceTrends[point.symbol] != trend { consecutivePriceTrends[point.symbol] = trend }
     }
 
     private func resetPriceTrends() {
@@ -879,20 +884,33 @@ final class AppModel: ObservableObject {
                 durationMilliseconds: Int64(rule.windowMinutes) * 60_000
             )
         }
-        monitorState = warming ? .warmingUp : .live
+        let nextState: MonitorState = warming ? .warmingUp : .live
+        if monitorState != nextState { monitorState = nextState }
         let notificationNote = notificationsAllowed ? "" : " · 系统通知未开启"
         let source = usingServerRelay ? "服务端币安行情" : "直连币安"
-        statusMessage = warming
+        let nextMessage = warming
             ? "\(source) · 正在积累完整规则窗口\(notificationNote)"
             : "\(source) · 实时监控中\(notificationNote)"
+        if statusMessage != nextMessage { statusMessage = nextMessage }
     }
 
     private func evaluate(_ point: PricePoint) {
         var triggers: [AlertTrigger] = []
+        #if os(macOS)
+        var updated = rules
+        for index in updated.indices where updated[index].symbol == point.symbol {
+            triggers += RuleEngine.evaluate(rule: &updated[index], current: point, buffer: buffer)
+        }
+        if updated != rules {
+            rules = updated
+            LocalPersistence.saveRules(updated)
+        }
+        #else
         for index in rules.indices where rules[index].symbol == point.symbol {
             triggers += RuleEngine.evaluate(rule: &rules[index], current: point, buffer: buffer)
         }
         LocalPersistence.saveRules(rules)
+        #endif
         record(triggers)
     }
 
