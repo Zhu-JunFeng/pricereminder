@@ -39,13 +39,18 @@ private struct MenuBarLabel: View {
     @EnvironmentObject private var model: AppModel
 
     var body: some View {
-        MenuBarPriceContents(items: model.menuSymbols.prefix(3).map { symbol in
-            let name = symbol == GoldQuote.symbol ? "黄金" : (symbol.hasSuffix("USDT") ? String(symbol.dropLast(4)) : symbol)
-            return MenuBarPriceItem(
-                text: "\(name) \(compactPrice(model.prices[symbol]?.priceText ?? "--"))",
-                trend: model.consecutivePriceTrends[symbol]
-            )
-        }).equatable()
+        if model.menuSymbols.isEmpty {
+            Image(systemName: "chart.line.uptrend.xyaxis")
+                .accessibilityLabel("PriceReminder")
+        } else {
+            MenuBarPriceContents(items: model.menuSymbols.prefix(3).map { symbol in
+                let name = symbol == GoldQuote.symbol ? "黄金" : (symbol.hasSuffix("USDT") ? String(symbol.dropLast(4)) : symbol)
+                return MenuBarPriceItem(
+                    text: "\(name) \(compactPrice(model.prices[symbol]?.priceText ?? "--"))",
+                    trend: model.consecutivePriceTrends[symbol]
+                )
+            }).equatable()
+        }
     }
 }
 
@@ -112,22 +117,35 @@ struct MenuPanel: View {
             .padding(.vertical, 12)
             Divider()
             if let error = model.positionError { Text(error).font(.caption).foregroundStyle(AppTheme.fall).padding(12) }
-            ScrollView {
-                VStack(spacing: 0) {
-                    ForEach(model.panelSymbols, id: \.self) { symbol in
-                        MenuPriceRow(symbol: symbol, now: now).padding(.horizontal, 16).padding(.vertical, 12)
-                        Divider()
+            if model.panelSymbols.isEmpty {
+                VStack(spacing: 8) {
+                    Text("还没有选择行情品种").foregroundStyle(.secondary)
+                    Button("选择品种") {
+                        model.settingsTab = "display"
+                        NSApplication.shared.activate(ignoringOtherApps: true)
+                        openSettings()
                     }
                 }
-                .fixedSize(horizontal: false, vertical: true)
-                .background {
-                    GeometryReader { geometry in
-                        Color.clear.preference(key: MenuContentHeightKey.self, value: geometry.size.height)
+                .frame(maxWidth: .infinity)
+                .padding(20)
+            } else {
+                ScrollView {
+                    VStack(spacing: 0) {
+                        ForEach(model.panelSymbols, id: \.self) { symbol in
+                            MenuPriceRow(symbol: symbol, now: now).padding(.horizontal, 16).padding(.vertical, 12)
+                            Divider()
+                        }
+                    }
+                    .fixedSize(horizontal: false, vertical: true)
+                    .background {
+                        GeometryReader { geometry in
+                            Color.clear.preference(key: MenuContentHeightKey.self, value: geometry.size.height)
+                        }
                     }
                 }
+                .frame(height: min(380, contentHeight))
+                .onPreferenceChange(MenuContentHeightKey.self) { contentHeight = $0 }
             }
-            .frame(height: min(380, contentHeight))
-            .onPreferenceChange(MenuContentHeightKey.self) { contentHeight = $0 }
             Divider()
             HStack {
                 Button(model.monitoringEnabled ? "停止监控" : "开始监控") {
@@ -274,7 +292,7 @@ private struct PriceTrendArrow: View {
 
 struct MacSettingsView: View {
     @EnvironmentObject private var model: AppModel
-    @State private var selection = Set<String>()
+    @State private var menuSelectionError: String?
     @State private var contractQuery = ""
     @State private var ruleSymbol = "BTCUSDT"
     @State private var ruleWindow = 5
@@ -296,31 +314,44 @@ struct MacSettingsView: View {
     var body: some View {
         TabView(selection: $model.settingsTab) {
             VStack(alignment: .leading, spacing: 14) {
-                Text("菜单栏合约").font(.title2.weight(.semibold))
-                Text("最多选择三个合约，价格每秒更新。").foregroundStyle(.secondary)
+                Text("行情显示").font(.title2.weight(.semibold))
+                Text("勾选要查看的品种。菜单栏显示前三个，展开面板可查看全部。")
+                    .foregroundStyle(.secondary)
 
-                TextField("筛选合约代码，如 BTC", text: $contractQuery)
+                TextField("搜索品种，如 BTC、黄金", text: $contractQuery)
                     .textFieldStyle(.roundedBorder)
 
-                List(filteredContracts, selection: $selection) { contract in
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(model.displaySymbol(contract.symbol))
-                        Text("\(contract.baseAsset) / \(contract.quoteAsset)")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                HStack {
+                    Text("已选 \(model.menuSymbols.count) 个品种")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    if let error = menuSelectionError {
+                        Text(error).font(.caption).foregroundStyle(AppTheme.fall)
                     }
-                    .tag(contract.symbol)
+                }
+
+                List(filteredContracts) { contract in
+                    Toggle(isOn: Binding(
+                        get: { model.menuSymbols.contains(contract.symbol) },
+                        set: { selected in
+                            do {
+                                try model.setMenuSymbol(contract.symbol, selected: selected)
+                                menuSelectionError = nil
+                            } catch { menuSelectionError = error.localizedDescription }
+                        }
+                    )) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(model.displaySymbol(contract.symbol))
+                            Text("\(contract.baseAsset) / \(contract.quoteAsset)")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .toggleStyle(.checkbox)
                 }
                 .overlay {
                     if !contractQuery.isEmpty, filteredContracts.isEmpty {
                         ContentUnavailableView.search(text: contractQuery)
-                    }
-                }
-                .onChange(of: selection) { _, value in
-                    if value.count <= 3 {
-                        model.setMenuSymbols(Array(value).sorted())
-                    } else {
-                        selection = Set(model.menuSymbols)
                     }
                 }
             }
@@ -520,7 +551,6 @@ struct MacSettingsView: View {
             Text(ruleSuccess)
         }
         .onAppear {
-            selection = Set(model.menuSymbols)
             ruleSymbol = model.primarySymbol
         }
     }

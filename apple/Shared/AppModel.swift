@@ -22,7 +22,7 @@ final class AppModel: ObservableObject {
     }
     private func validateAdditionalSymbol(_ symbol: String) throws {
         guard Set(desiredSymbols + [symbol]).count <= 50 else {
-            throw NSError(domain: "Positions", code: 2, userInfo: [NSLocalizedDescriptionKey: "最多同时订阅 50 个不同合约，请先减少订阅。"])
+            throw NSError(domain: "Subscriptions", code: 2, userInfo: [NSLocalizedDescriptionKey: "最多同时订阅 50 个不同品种，请先减少订阅。"])
         }
     }
     func savePosition(_ record: PositionRecord) throws {
@@ -468,18 +468,21 @@ final class AppModel: ObservableObject {
         #endif
     }
 
-    func setMenuSymbols(_ symbols: [String]) {
-        #if os(macOS)
-        let next = Set(symbols.prefix(3))
-        let other = Set(positions.map { $0.setting.symbol } + rules.filter(\.isEnabled).map(\.symbol) + [primarySymbol])
-        guard next.union(other).count <= 50 else { positionError = "最多同时订阅 50 个不同合约"; return }
-        #endif
-        let previous = Set(menuSymbols.map { $0.uppercased() })
-        menuSymbols = Array(symbols.prefix(3))
-        menuSymbols.filter { !previous.contains($0.uppercased()) }.forEach { recordRecentSymbol($0) }
+    #if os(macOS)
+    func setMenuSymbol(_ symbol: String, selected: Bool) throws {
+        guard menuSymbols.contains(symbol) != selected else { return }
+        if selected { try validateAdditionalSymbol(symbol) }
+
+        if selected {
+            menuSymbols.append(symbol)
+            recordRecentSymbol(symbol)
+        } else {
+            menuSymbols.removeAll { $0 == symbol }
+        }
         UserDefaults.standard.set(menuSymbols, forKey: "menuSymbols")
         syncSubscriptionsIfMonitoring()
     }
+    #endif
 
     func recordRecentSymbol(_ symbol: String) {
         let normalized = symbol.uppercased()
