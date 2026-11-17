@@ -31,7 +31,7 @@ public actor BinanceMarketClient {
     }
 
     public func contracts() async throws -> [Contract] {
-        let (data, response) = try await session.data(from: exchangeInfoURL)
+        let (data, response) = try await session.data(for: URLRequest(url: exchangeInfoURL, timeoutInterval: 12))
         guard let http = response as? HTTPURLResponse, 200..<300 ~= http.statusCode else {
             throw PriceCoreError.invalidExchangeResponse
         }

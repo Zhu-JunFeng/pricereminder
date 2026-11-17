@@ -49,6 +49,11 @@ final class AppModel: ObservableObject {
     }
     #endif
     @Published private(set) var contracts: [Contract] = []
+    @Published private(set) var loadingContracts = false
+    @Published private(set) var contractLoadError: String?
+    #if os(macOS)
+    @Published private(set) var contractAuthorizationRequired = false
+    #endif
     @Published private(set) var prices: [String: PricePoint] = [:]
     @Published private(set) var dailyOpens: [String: (start: Int64, price: Decimal)] = [:]
     @Published private(set) var dailyOpenFailures: Set<String> = []
@@ -94,6 +99,9 @@ final class AppModel: ObservableObject {
         do {
             _ = try await ServerConnectionService.shared.authorize(platform: "macos", displayName: "Mac")
             serverAuthorizationMessage = "服务端连接已授权"
+            if contracts.isEmpty || contractLoadError != nil {
+                await bootstrap(platform: "macos")
+            }
         } catch { serverAuthorizationMessage = error.localizedDescription }
     }
     #endif
@@ -242,30 +250,46 @@ final class AppModel: ObservableObject {
     }
 
     func bootstrap(platform: String) async {
+        guard !loadingContracts else { return }
+        loadingContracts = true
+        contractLoadError = nil
+        #if os(macOS)
+        contractAuthorizationRequired = false
+        #endif
+        defer { loadingContracts = false }
+
         do {
-            contracts = try await market.contracts() + [GoldQuote.contract]
-            validMarketSymbols = Set(contracts.filter { $0.quoteAsset == "USDT" || $0.quoteAsset == "USDC" }.map(\.symbol))
-            connectMarketIfNeeded()
-            if !monitoringEnabled {
-                statusMessage = "可直接连接币安行情"
-            }
+            let direct = try await market.contracts()
+            guard !direct.isEmpty else { throw PriceCoreError.invalidExchangeResponse }
+            applyContracts(direct, status: "可直接连接币安行情")
         } catch {
+            guard !Task.isCancelled else { return }
             do {
-                contracts = try await ServerConnectionService.shared.contracts(
+                let relayed = try await ServerConnectionService.shared.contracts(
                     platform: platform, displayName: platform == "macos" ? "Mac" : "iPhone"
                 )
-                if !contracts.contains(where: { $0.symbol == GoldQuote.symbol }) { contracts.append(GoldQuote.contract) }
-                validMarketSymbols = Set(contracts.filter { $0.quoteAsset == "USDT" || $0.quoteAsset == "USDC" }.map(\.symbol))
-                connectMarketIfNeeded()
-                if !monitoringEnabled {
-                    statusMessage = "通过服务端获取币安合约"
+                guard relayed.contains(where: { $0.quoteAsset == "USDT" || $0.quoteAsset == "USDC" }) else {
+                    throw PriceCoreError.invalidServerResponse
                 }
+                applyContracts(relayed, status: "通过服务端获取币安合约")
             } catch {
+                guard !Task.isCancelled else { return }
+                contractLoadError = error.localizedDescription
+                #if os(macOS)
+                contractAuthorizationRequired = error is KeychainStore.Failure
+                #endif
                 if !monitoringEnabled {
                     statusMessage = "合约列表获取失败：\(error.localizedDescription)"
                 }
             }
         }
+    }
+
+    private func applyContracts(_ catalog: [Contract], status: String) {
+        contracts = catalog.contains(where: { $0.symbol == GoldQuote.symbol }) ? catalog : catalog + [GoldQuote.contract]
+        validMarketSymbols = Set(contracts.filter { $0.quoteAsset == "USDT" || $0.quoteAsset == "USDC" }.map(\.symbol))
+        connectMarketIfNeeded()
+        if !monitoringEnabled { statusMessage = status }
     }
 
     func startMonitoring() async {

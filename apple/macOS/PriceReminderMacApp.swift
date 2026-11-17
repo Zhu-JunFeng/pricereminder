@@ -350,8 +350,13 @@ struct MacSettingsView: View {
                     .toggleStyle(.checkbox)
                 }
                 .overlay {
-                    if !contractQuery.isEmpty, filteredContracts.isEmpty {
-                        ContentUnavailableView.search(text: contractQuery)
+                    if filteredContracts.isEmpty {
+                        contractListStatus
+                    }
+                }
+                .onAppear {
+                    if model.contracts.isEmpty {
+                        Task { await model.bootstrap(platform: "macos") }
                     }
                 }
             }
@@ -552,6 +557,33 @@ struct MacSettingsView: View {
         }
         .onAppear {
             ruleSymbol = model.primarySymbol
+        }
+    }
+
+    @ViewBuilder
+    private var contractListStatus: some View {
+        if model.loadingContracts {
+            ProgressView("正在加载合约目录…")
+        } else if let error = model.contractLoadError {
+            ContentUnavailableView {
+                Label("暂时无法加载合约目录", systemImage: "wifi.exclamationmark")
+            } description: {
+                Text(model.contractAuthorizationRequired ? model.serverAuthorizationMessage ?? error : error)
+            } actions: {
+                if model.contractAuthorizationRequired {
+                    Button(model.authorizingServer ? "正在授权…" : "授权服务端连接") {
+                        Task { await model.authorizeServer() }
+                    }
+                    .disabled(model.authorizingServer)
+                }
+                Button("重新加载") { Task { await model.bootstrap(platform: "macos") } }
+                    .disabled(model.authorizingServer)
+            }
+        } else if model.contracts.isEmpty {
+            Button("加载合约目录") { Task { await model.bootstrap(platform: "macos") } }
+        } else {
+            ContentUnavailableView("未找到匹配品种", systemImage: "magnifyingglass",
+                                   description: Text("试试 ETH、BTC 或黄金。"))
         }
     }
 
