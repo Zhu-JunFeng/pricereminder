@@ -16,7 +16,13 @@ final class AppModel: ObservableObject {
     @Published private(set) var positions: [PositionRecord] = []
     @Published var positionError: String?
     @Published var settingsTab = "display"
+    static let menuBarPriceCounts = 0...5
+    @Published private(set) var menuBarPriceCount: Int = {
+        let saved = UserDefaults.standard.object(forKey: "menuBarPriceCount") as? Int ?? 3
+        return AppModel.menuBarPriceCounts.contains(saved) ? saved : 3
+    }()
     private var positionsReadable = false
+    var menuBarSymbols: ArraySlice<String> { menuSymbols.prefix(menuBarPriceCount) }
     var panelSymbols: [String] {
         menuSymbols + Set(positions.map { $0.setting.symbol }).subtracting(menuSymbols).sorted()
     }
@@ -63,6 +69,7 @@ final class AppModel: ObservableObject {
         if dailyOpens[symbol]?.start == start { return }
         dailyOpenFailures.remove(symbol)
         while !Task.isCancelled {
+            if dailyOpens[symbol]?.start == start { return }
             do {
                 let price = try await market.dailyOpen(symbol: symbol, start: start)
                 guard !Task.isCancelled, BeijingDailyPrice.startMilliseconds(at: Date()) == start else { return }
@@ -92,6 +99,8 @@ final class AppModel: ObservableObject {
     #if os(macOS)
     @Published private(set) var authorizingServer = false
     @Published private(set) var serverAuthorizationMessage: String?
+    @Published private(set) var chartAuthorizationRequired = false
+    @Published private(set) var chartAuthorizationVersion = UUID()
     func authorizeServer() async {
         guard !authorizingServer else { return }
         authorizingServer = true
@@ -99,6 +108,8 @@ final class AppModel: ObservableObject {
         do {
             _ = try await ServerConnectionService.shared.authorize(platform: "macos", displayName: "Mac")
             serverAuthorizationMessage = "服务端连接已授权"
+            chartAuthorizationRequired = false
+            chartAuthorizationVersion = UUID()
             if contracts.isEmpty || contractLoadError != nil {
                 await bootstrap(platform: "macos")
             }
@@ -493,6 +504,20 @@ final class AppModel: ObservableObject {
     }
 
     #if os(macOS)
+    func setMenuBarPriceCount(_ count: Int) {
+        guard Self.menuBarPriceCounts.contains(count), count != menuBarPriceCount else { return }
+        menuBarPriceCount = count
+        UserDefaults.standard.set(count, forKey: "menuBarPriceCount")
+    }
+
+    func moveMenuSymbol(_ symbol: String, up: Bool) {
+        guard let index = menuSymbols.firstIndex(of: symbol) else { return }
+        let destination = up ? index - 1 : index + 1
+        guard menuSymbols.indices.contains(destination) else { return }
+        menuSymbols.swapAt(index, destination)
+        UserDefaults.standard.set(menuSymbols, forKey: "menuSymbols")
+    }
+
     func setMenuSymbol(_ symbol: String, selected: Bool) throws {
         guard menuSymbols.contains(symbol) != selected else { return }
         if selected { try validateAdditionalSymbol(symbol) }
@@ -1183,6 +1208,47 @@ final class AppModel: ObservableObject {
     }
 
     #if os(macOS)
+    private var chartCache: [String: (window: Int64, fetchedAt: Date, chart: PriceChart)] = [:]
+
+    func cachedPanelChart(symbol: String, window: Int64) -> PriceChart? {
+        guard let cached = chartCache[symbol], cached.window == window else { return nil }
+        return cached.chart
+    }
+
+    func loadPanelChart(symbol: String, window: Int64) async throws -> PriceChart {
+        if let cached = chartCache[symbol], cached.window == window,
+           Date().timeIntervalSince(cached.fetchedAt) < 60 {
+            return cached.chart
+        }
+        let client: APIClient
+        do {
+            client = try await ServerConnectionService.shared.authenticatedClient(platform: "macos", displayName: "Mac")
+        } catch let error as KeychainStore.Failure {
+            try Task.checkCancellation()
+            chartAuthorizationRequired = true
+            throw error
+        }
+        try Task.checkCancellation()
+        let chart = try await client.chart(symbol: symbol)
+        try Task.checkCancellation()
+        guard chart.symbol == symbol, chart.intervalMS > 0, !chart.points.isEmpty else {
+            throw PriceCoreError.invalidServerResponse
+        }
+        if symbol != GoldQuote.symbol {
+            let end = window + 86_400_000
+            guard chart.points.allSatisfy({ $0.time >= window && $0.time < end }) else {
+                throw PriceCoreError.invalidServerResponse
+            }
+            if let open = chart.open.flatMap({ Decimal(string: $0) }), open > 0,
+               window == BeijingDailyPrice.startMilliseconds(at: Date()) {
+                dailyOpens[symbol] = (window, open)
+                dailyOpenFailures.remove(symbol)
+            }
+        }
+        chartCache[symbol] = (window, Date(), chart)
+        return chart
+    }
+
     func panelMonitoringStatus(at now: Date) -> (text: String, live: Bool) {
         guard monitoringEnabled else { return ("监控已停止", false) }
         guard panelSymbols.contains(GoldQuote.symbol) else {

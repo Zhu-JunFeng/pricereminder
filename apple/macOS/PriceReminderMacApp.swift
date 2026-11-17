@@ -39,40 +39,23 @@ private struct MenuBarLabel: View {
     @EnvironmentObject private var model: AppModel
 
     var body: some View {
-        if model.menuSymbols.isEmpty {
+        if model.menuBarSymbols.isEmpty {
             Image(systemName: "chart.line.uptrend.xyaxis")
                 .accessibilityLabel("PriceReminder")
         } else {
-            MenuBarPriceContents(items: model.menuSymbols.prefix(3).map { symbol in
+            // A MenuBarExtra status item needs one label to show all prices.
+            Text(verbatim: model.menuBarSymbols.map { symbol in
                 let name = symbol == GoldQuote.symbol ? "黄金" : (symbol.hasSuffix("USDT") ? String(symbol.dropLast(4)) : symbol)
-                return MenuBarPriceItem(
-                    text: "\(name) \(compactPrice(model.prices[symbol]?.priceText ?? "--"))",
-                    trend: model.consecutivePriceTrends[symbol]
-                )
-            }).equatable()
-        }
-    }
-}
-
-private struct MenuBarPriceItem: Equatable {
-    let text: String
-    let trend: ConsecutivePriceTrend?
-}
-
-private struct MenuBarPriceContents: View, Equatable {
-    let items: [MenuBarPriceItem]
-
-    var body: some View {
-        HStack(spacing: 5) {
-            ForEach(Array(items.enumerated()), id: \.offset) { index, item in
-                if index > 0 { Text("·").foregroundStyle(.secondary) }
-                HStack(spacing: 2) {
-                    Text(item.text)
-                    PriceTrendArrow(trend: item.trend, size: 7)
+                let price = compactPrice(model.prices[symbol]?.priceText ?? "--")
+                let arrow = switch model.consecutivePriceTrends[symbol] {
+                case .rise: " ↑"
+                case .fall: " ↓"
+                case nil: ""
                 }
-            }
+                return "\(name) \(price)\(arrow)"
+            }.joined(separator: " · "))
+            .monospaced()
         }
-        .monospacedDigit()
     }
 }
 
@@ -88,6 +71,8 @@ struct MenuPanel: View {
     @Environment(\.openSettings) private var openSettings
     @State private var contentHeight: CGFloat = 0
     @State private var panelVisible = false
+    @AppStorage("showPanelDetails") private var showPanelDetails = false
+    @AppStorage("showPanelCharts") private var showPanelCharts = true
 
     var body: some View {
         Group {
@@ -99,24 +84,39 @@ struct MenuPanel: View {
                 panel(at: Date())
             }
         }
-        .onAppear { panelVisible = true }
+        .background(MenuPanelWindowStyle(isVisible: $panelVisible))
         .onDisappear { panelVisible = false }
     }
 
     private func panel(at now: Date) -> some View {
         VStack(alignment: .leading, spacing: 0) {
-            Group {
-                let status = model.panelMonitoringStatus(at: now)
+            let status = model.panelMonitoringStatus(at: now)
+            if showPanelDetails || !model.monitoringEnabled || model.monitorState == .disconnected {
                 HStack {
-                    Text(status.text).font(.caption).foregroundStyle(.secondary)
+                    Text(showPanelDetails ? status.text : (model.monitoringEnabled ? "行情连接中断" : "监控已停止"))
+                        .font(.caption).foregroundStyle(.secondary)
                     Spacer()
                     Circle().fill(status.live ? AppTheme.primary : Color.orange).frame(width: 8, height: 8)
                 }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
+                Divider()
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 12)
-            Divider()
             if let error = model.positionError { Text(error).font(.caption).foregroundStyle(AppTheme.fall).padding(12) }
+            if showPanelCharts && model.chartAuthorizationRequired {
+                HStack {
+                    Text("查看走势需要授权服务端连接")
+                        .font(.caption).foregroundStyle(.secondary)
+                    Spacer()
+                    Button(model.authorizingServer ? "正在授权…" : "授权") {
+                        Task { await model.authorizeServer() }
+                    }
+                    .disabled(model.authorizingServer)
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 8)
+                Divider()
+            }
             if model.panelSymbols.isEmpty {
                 VStack(spacing: 8) {
                     Text("还没有选择行情品种").foregroundStyle(.secondary)
@@ -132,7 +132,9 @@ struct MenuPanel: View {
                 ScrollView {
                     VStack(spacing: 0) {
                         ForEach(model.panelSymbols, id: \.self) { symbol in
-                            MenuPriceRow(symbol: symbol, now: now).padding(.horizontal, 16).padding(.vertical, 12)
+                            MenuPriceRow(symbol: symbol, now: now, details: showPanelDetails,
+                                         showChart: panelVisible && showPanelCharts)
+                                .padding(.horizontal, 16).padding(.vertical, 12)
                             Divider()
                         }
                     }
@@ -170,25 +172,53 @@ struct MenuPanel: View {
         .frame(width: 380)
         .background(Color(nsColor: .windowBackgroundColor))
         .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-        .background(MenuPanelWindowStyle())
     }
 }
 
 private struct MenuPanelWindowStyle: NSViewRepresentable {
+    @Binding var isVisible: Bool
+
     final class View: NSView {
+        var onVisibilityChange: ((Bool) -> Void)?
+
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
-            guard let window else { return }
+            let notifications = NotificationCenter.default
+            notifications.removeObserver(self)
+            guard let window else {
+                setVisible(false)
+                return
+            }
             window.isOpaque = false
             window.backgroundColor = .clear
             window.hasShadow = true
             window.contentView?.wantsLayer = true
             window.contentView?.layer?.cornerRadius = 14
             window.contentView?.layer?.masksToBounds = true
+            notifications.addObserver(self, selector: #selector(didBecomeKey),
+                                      name: NSWindow.didBecomeKeyNotification, object: window)
+            notifications.addObserver(self, selector: #selector(didHide),
+                                      name: NSWindow.didResignKeyNotification, object: window)
+            notifications.addObserver(self, selector: #selector(didHide),
+                                      name: NSWindow.willCloseNotification, object: window)
+            setVisible(window.isVisible && window.isKeyWindow)
+        }
+
+        @objc private func didBecomeKey(_ notification: Notification) { setVisible(true) }
+        @objc private func didHide(_ notification: Notification) { setVisible(false) }
+
+        private func setVisible(_ visible: Bool) {
+            DispatchQueue.main.async { [weak self] in self?.onVisibilityChange?(visible) }
         }
     }
-    func makeNSView(context: Context) -> View { View() }
-    func updateNSView(_ view: View, context: Context) {}
+    func makeNSView(context: Context) -> View {
+        let view = View()
+        updateNSView(view, context: context)
+        return view
+    }
+    func updateNSView(_ view: View, context: Context) {
+        view.onVisibilityChange = { isVisible = $0 }
+    }
 }
 
 private struct MenuPriceRow: View {
@@ -196,63 +226,97 @@ private struct MenuPriceRow: View {
     let symbol: String
     let now: Date
 
+    let details: Bool
+    let showChart: Bool
+
+    private var isGold: Bool { symbol == GoldQuote.symbol }
+
     var body: some View {
+        let stale = model.prices[symbol].map { model.isPriceStale($0, now: now) } ?? false
         VStack(alignment: .leading, spacing: 5) {
-            HStack {
-                Text(model.displaySymbol(symbol)).font(.headline)
-                Spacer()
-                HStack(spacing: 5) {
-                    Text(compactPrice(model.prices[symbol]?.priceText ?? "--"))
-                        .font(.title3.weight(.semibold)).numericPriceStyle()
-                    PriceTrendArrow(trend: model.consecutivePriceTrends[symbol], size: 9)
-                }
-            }
-            Group {
-                HStack {
-                    Text(symbol == GoldQuote.symbol ? "日涨幅 · 相对昨收 · 元/克" : "24h 涨幅 · 北京时间 00:00 起").foregroundStyle(.secondary)
-                    Spacer()
-                    if let change = model.dailyChange(symbol: symbol, now: now) {
-                        let stale = model.prices[symbol].map { model.isPriceStale($0, now: now) } ?? true
-                        Text(stale ? "\(change.percentageText) · 价格已陈旧" : change.percentageText)
-                            .foregroundStyle(stale ? Color.secondary : color(for: change.direction))
-                    } else {
-                        Text(symbol == GoldQuote.symbol ? "--" : (model.dailyOpenFailures.contains(symbol) ? "暂不可用" : "加载中…"))
-                            .foregroundStyle(.secondary)
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Text(model.displaySymbol(symbol)).font(.headline).lineLimit(1)
+                Spacer(minLength: 2)
+                ViewThatFits(in: .horizontal) {
+                    HStack(alignment: .firstTextBaseline, spacing: 5) {
+                        headlinePrice(stale: stale)
+                        headlineChange(stale: stale)
+                    }
+                    VStack(alignment: .trailing, spacing: 3) {
+                        headlinePrice(stale: stale)
+                        headlineChange(stale: stale)
                     }
                 }
-                .font(.caption)
-                .numericPriceStyle()
-                .help(symbol == GoldQuote.symbol ? "相对上一交易日收盘价计算，不含杠杆。" : "北京时间每日 00:00 起，按该分钟 K 线开盘价计算，不含杠杆；非滚动 24 小时涨幅。")
-                .task(id: "\(symbol):\(BeijingDailyPrice.startMilliseconds(at: now))") {
-                    await model.loadDailyOpen(symbol: symbol, start: BeijingDailyPrice.startMilliseconds(at: now))
-                }
             }
-            if symbol == GoldQuote.symbol {
-                Text(model.goldStatus).font(.caption2).foregroundStyle(.secondary)
-                if let quote = model.goldQuote {
-                    Text("新浪财经 · 报价时间 \(quote.quoteTimeText)")
-                        .font(.caption2).foregroundStyle(.secondary)
-                }
+            if isGold, model.goldQuote?.state == "closed" {
+                Text("休市").font(.caption2).foregroundStyle(.secondary)
+            } else if stale {
+                Text("报价已过期").font(.caption2).foregroundStyle(.secondary)
+            } else if isGold, !model.goldFeedAvailable, model.monitoringEnabled {
+                Text("黄金行情暂不可用").font(.caption2).foregroundStyle(.secondary)
             }
-            Group {
-                let point = model.prices[symbol]
-                let stale = point.map { model.isPriceStale($0, now: now) } ?? true
-                VStack(alignment: .leading, spacing: 5) {
-                    ForEach(model.positions.filter { $0.setting.symbol == symbol }) { position in
-                        let setting = position.setting
-                        HStack(alignment: .firstTextBaseline) {
-                            Text("\(setting.positionSide.displayName) · \(setting.leverage)倍 · 开仓 \(compactPrice(setting.priceText))")
-                                .lineLimit(1).truncationMode(.middle).help(setting.priceText)
-                            Spacer(minLength: 8)
-                            if let point {
-                                let change = EntryPriceCalculator.change(currentPrice: point.price, entryPrice: setting.price, positionSide: setting.positionSide, leverage: setting.leverage)
-                                Text(change.percentageText).foregroundStyle(stale ? Color.secondary : color(for: change.direction)).fixedSize()
-                            } else { Text("--") }
+            if showChart {
+                PanelDayChart(symbol: symbol, now: now)
+            }
+            if details {
+                Text(isGold ? "今日涨跌 · 相对昨收" : "今日涨跌 · 北京时间 00:00 起")
+                    .font(.caption).foregroundStyle(.secondary)
+                if isGold {
+                    Text(model.goldStatus).font(.caption2).foregroundStyle(.secondary)
+                    if let quote = model.goldQuote {
+                        Text("新浪财经 · 报价时间 \(quote.quoteTimeText)")
+                            .font(.caption2).foregroundStyle(.secondary)
+                    }
+                }
+                Group {
+                    let point = model.prices[symbol]
+                    let stale = point.map { model.isPriceStale($0, now: now) } ?? true
+                    VStack(alignment: .leading, spacing: 5) {
+                        ForEach(model.positions.filter { $0.setting.symbol == symbol }) { position in
+                            let setting = position.setting
+                            HStack(alignment: .firstTextBaseline) {
+                                Text("\(setting.positionSide.displayName) · \(setting.leverage)倍 · 开仓 \(compactPrice(setting.priceText))")
+                                    .lineLimit(1).truncationMode(.middle).help(setting.priceText)
+                                Spacer(minLength: 8)
+                                if let point {
+                                    let change = EntryPriceCalculator.change(currentPrice: point.price, entryPrice: setting.price, positionSide: setting.positionSide, leverage: setting.leverage)
+                                    Text(change.percentageText).foregroundStyle(stale ? Color.secondary : color(for: change.direction)).fixedSize()
+                                } else { Text("--") }
+                            }
                         }
-                    }
-                }.font(.caption).foregroundStyle(.secondary).numericPriceStyle()
+                    }.font(.caption).foregroundStyle(.secondary).numericPriceStyle()
+                }
             }
         }
+        .task(id: BeijingDailyPrice.startMilliseconds(at: now)) {
+            if !isGold {
+                await model.loadDailyOpen(symbol: symbol, start: BeijingDailyPrice.startMilliseconds(at: now))
+            }
+        }
+    }
+
+    private func headlinePrice(stale: Bool) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 3) {
+            Text(compactPrice(model.prices[symbol]?.priceText ?? "--"))
+                .font(.title3.weight(.semibold))
+            if isGold { Text("元/克").font(.caption).foregroundStyle(.secondary) }
+            PriceTrendArrow(trend: stale ? nil : model.consecutivePriceTrends[symbol], size: 9)
+        }
+        .numericPriceStyle()
+        .fixedSize()
+    }
+
+    private func headlineChange(stale: Bool) -> some View {
+        let change = model.dailyChange(symbol: symbol, now: now)
+        return HStack(alignment: .firstTextBaseline, spacing: 3) {
+            Text("今日").font(.caption).foregroundStyle(.secondary)
+            Text(change?.percentageText ?? "--")
+                .font(.title3.weight(.semibold))
+                .foregroundStyle(change.flatMap { stale ? nil : color(for: $0.direction) } ?? .secondary)
+        }
+        .numericPriceStyle()
+        .fixedSize()
+        .help(isGold ? "相对上一交易日收盘价" : "相对北京时间 00:00 开盘价")
     }
 
     private func color(for direction: EntryPriceDirection) -> Color {
@@ -260,6 +324,139 @@ private struct MenuPriceRow: View {
         case .rise: AppTheme.rise
         case .fall: AppTheme.fall
         case .flat: .secondary
+        }
+    }
+}
+
+private struct PanelDayChart: View {
+    @EnvironmentObject private var model: AppModel
+    @State private var series: PriceChart?
+    @State private var seriesWindow: Int64?
+    @State private var failed = false
+    let symbol: String
+    let now: Date
+
+    private var window: Int64 {
+        let reference = symbol == GoldQuote.symbol ? now.addingTimeInterval(-20 * 3600) : now
+        return BeijingDailyPrice.startMilliseconds(at: reference)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            if let series, seriesWindow == window {
+                Canvas { context, size in
+                    draw(series, context: context, size: size)
+                }
+                .frame(height: 48)
+                .accessibilityLabel("\(model.displaySymbol(symbol))走势，\(series.date)")
+                HStack {
+                    Text(series.date)
+                    if series.symbol == GoldQuote.symbol || series.stale || failed {
+                        Text("更新于 \(lastUpdate(series.updatedAt))")
+                    }
+                    Spacer()
+                    if let close = series.finalClose {
+                        Text("收盘 \(compactPrice(close))")
+                    }
+                }
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .help(series.source)
+            } else {
+                Text(failed ? "走势暂不可用" : "正在加载走势…")
+                    .font(.caption2).foregroundStyle(.secondary)
+                    .frame(height: 48)
+            }
+        }
+        .task(id: "\(window):\(model.chartAuthorizationVersion)") {
+            let requestedWindow = window
+            series = model.cachedPanelChart(symbol: symbol, window: requestedWindow)
+            seriesWindow = requestedWindow
+            failed = false
+            while !Task.isCancelled {
+                do {
+                    let history = try await model.loadPanelChart(symbol: symbol, window: requestedWindow)
+                    guard !Task.isCancelled else { return }
+                    series = history
+                    failed = false
+                } catch {
+                    guard !Task.isCancelled else { return }
+                    failed = true
+                }
+                do { try await Task.sleep(for: .seconds(60)) } catch { return }
+            }
+        }
+    }
+
+    private func lastUpdate(_ milliseconds: Int64) -> String {
+        let date = Date(timeIntervalSince1970: Double(milliseconds) / 1000)
+        var style = Date.FormatStyle().hour(.twoDigits(amPM: .omitted)).minute(.twoDigits)
+        style.timeZone = TimeZone(secondsFromGMT: 8 * 3600)!
+        return date.formatted(style)
+    }
+
+    private struct PlotPoint {
+        let time: Int64
+        let open: Double?
+        var high: Double
+        var low: Double
+        var close: Double
+    }
+
+    private func draw(_ series: PriceChart, context: GraphicsContext, size: CGSize) {
+        var points = series.points.compactMap { point -> PlotPoint? in
+            guard let close = Double(point.close), close.isFinite else { return nil }
+            return PlotPoint(time: point.time, open: point.open.flatMap(Double.init),
+                             high: point.high.flatMap(Double.init) ?? close,
+                             low: point.low.flatMap(Double.init) ?? close, close: close)
+        }
+        if let index = points.indices.last, points[index].open != nil,
+           series.finalClose == nil, let live = model.prices[symbol], live.eventTime >= series.updatedAt,
+           live.eventTime >= points[index].time, live.eventTime - points[index].time < series.intervalMS,
+           let price = Double(live.priceText), price.isFinite {
+            points[index].close = price
+            points[index].high = max(price, points[index].high)
+            points[index].low = min(price, points[index].low)
+        }
+        guard let first = points.first, let last = points.last,
+              let high = points.map(\.high).max(), let low = points.map(\.low).min(),
+              high.isFinite, low.isFinite else { return }
+        let timeSpan = max(series.intervalMS, last.time - first.time)
+        let width = max(1, size.width - 8)
+        let scale = max(high - low, high * 0.000001, 0.000000000001)
+        func x(_ time: Int64) -> CGFloat { 4 + CGFloat(time - first.time) / CGFloat(timeSpan) * width }
+        func y(_ price: Double) -> CGFloat {
+            size.height / 2 - CGFloat((price - low - (high - low) / 2) / scale) * max(1, size.height - 8)
+        }
+        if first.open != nil {
+            let candleWidth = max(1, min(7, width * CGFloat(series.intervalMS) / CGFloat(timeSpan) * 0.65))
+            for point in points {
+                guard let open = point.open else { continue }
+                let color = point.close >= open ? AppTheme.rise : AppTheme.fall
+                let center = x(point.time)
+                var wick = Path()
+                wick.move(to: CGPoint(x: center, y: y(point.high)))
+                wick.addLine(to: CGPoint(x: center, y: y(point.low)))
+                context.stroke(wick, with: .color(color), lineWidth: 1)
+                let body = CGRect(x: center - candleWidth / 2, y: min(y(open), y(point.close)),
+                                  width: candleWidth, height: max(1, abs(y(open) - y(point.close))))
+                context.fill(Path(body), with: .color(color))
+            }
+        } else {
+            var line = Path()
+            var previous: PlotPoint?
+            for point in points {
+                let location = CGPoint(x: x(point.time), y: y(point.close))
+                if let previous, point.time - previous.time == series.intervalMS {
+                    line.addLine(to: location)
+                } else {
+                    line.move(to: location)
+                    context.fill(Path(ellipseIn: CGRect(x: location.x - 1, y: location.y - 1, width: 2, height: 2)),
+                                 with: .color(AppTheme.primary))
+                }
+                previous = point
+            }
+            context.stroke(line, with: .color(AppTheme.primary), lineWidth: 1.5)
         }
     }
 }
@@ -292,6 +489,8 @@ private struct PriceTrendArrow: View {
 
 struct MacSettingsView: View {
     @EnvironmentObject private var model: AppModel
+    @AppStorage("showPanelDetails") private var showPanelDetails = false
+    @AppStorage("showPanelCharts") private var showPanelCharts = true
     @State private var menuSelectionError: String?
     @State private var contractQuery = ""
     @State private var ruleSymbol = "BTCUSDT"
@@ -315,8 +514,29 @@ struct MacSettingsView: View {
         TabView(selection: $model.settingsTab) {
             VStack(alignment: .leading, spacing: 14) {
                 Text("行情显示").font(.title2.weight(.semibold))
-                Text("勾选要查看的品种。菜单栏显示前三个，展开面板可查看全部。")
+                Text("菜单栏按已选顺序显示价格，展开面板可查看全部。")
                     .foregroundStyle(.secondary)
+
+                Picker("菜单栏显示数量", selection: Binding(
+                    get: { model.menuBarPriceCount },
+                    set: { model.setMenuBarPriceCount($0) }
+                )) {
+                    Text("仅图标").tag(0)
+                    ForEach(AppModel.menuBarPriceCounts.dropFirst(), id: \.self) { count in
+                        Text("\(count) 个").tag(count)
+                    }
+                }
+                .pickerStyle(.menu)
+
+                HStack(spacing: 18) {
+                    Toggle("显示行情详情", isOn: $showPanelDetails)
+                    Toggle("显示今日走势", isOn: $showPanelCharts)
+                }
+                .toggleStyle(.checkbox)
+
+                if !model.menuSymbols.isEmpty {
+                    selectedSymbolsOrder
+                }
 
                 TextField("搜索品种，如 BTC、黄金", text: $contractQuery)
                     .textFieldStyle(.roundedBorder)
@@ -557,6 +777,41 @@ struct MacSettingsView: View {
         }
         .onAppear {
             ruleSymbol = model.primarySymbol
+        }
+    }
+
+    private var selectedSymbolsOrder: some View {
+        GroupBox("已选品种顺序") {
+            ScrollView {
+                VStack(spacing: 4) {
+                    ForEach(model.menuSymbols, id: \.self) { symbol in
+                        HStack(spacing: 12) {
+                            Text(model.displaySymbol(symbol))
+                            Spacer()
+                            Button {
+                                model.moveMenuSymbol(symbol, up: true)
+                            } label: {
+                                Image(systemName: "chevron.up")
+                            }
+                            .disabled(symbol == model.menuSymbols.first)
+                            .help("上移")
+                            .accessibilityLabel("上移 \(model.displaySymbol(symbol))")
+                            Button {
+                                model.moveMenuSymbol(symbol, up: false)
+                            } label: {
+                                Image(systemName: "chevron.down")
+                            }
+                            .disabled(symbol == model.menuSymbols.last)
+                            .help("下移")
+                            .accessibilityLabel("下移 \(model.displaySymbol(symbol))")
+                        }
+                        .buttonStyle(.borderless)
+                        .padding(.vertical, 3)
+                    }
+                }
+                .padding(.trailing, 6)
+            }
+            .frame(maxHeight: 100)
         }
     }
 

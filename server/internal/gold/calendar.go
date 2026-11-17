@@ -22,16 +22,10 @@ func sessionState(now time.Time) string {
 	default:
 		return "closed"
 	}
-	if day.Weekday() == time.Saturday || day.Weekday() == time.Sunday {
+	if !isTradingDay(day) {
 		return "closed"
 	}
-	date := day.Format("2006-01-02")
-	holidays := [][2]string{{"2026-01-01", "2026-01-03"}, {"2026-02-15", "2026-02-23"}, {"2026-04-04", "2026-04-06"}, {"2026-05-01", "2026-05-05"}, {"2026-06-19", "2026-06-21"}, {"2026-09-25", "2026-09-27"}, {"2026-10-01", "2026-10-07"}}
-	for _, h := range holidays {
-		if date >= h[0] && date <= h[1] {
-			return "closed"
-		}
-	}
+	date := day.Format(time.DateOnly)
 	if night {
 		for _, d := range []string{"2025-12-31", "2026-02-13", "2026-04-03", "2026-04-30", "2026-06-18", "2026-09-24", "2026-09-30"} {
 			if date == d {
@@ -40,4 +34,36 @@ func sessionState(now time.Time) string {
 		}
 	}
 	return "open"
+}
+
+// TradingDayBefore and TradingDayAfter use the same calendar as live quotes.
+func TradingDayBefore(day time.Time) (time.Time, bool) { return adjacentTradingDay(day, -1) }
+func TradingDayAfter(day time.Time) (time.Time, bool)  { return adjacentTradingDay(day, 1) }
+
+func adjacentTradingDay(day time.Time, step int) (time.Time, bool) {
+	day = day.In(beijing)
+	for i := 0; i < 14; i++ {
+		day = day.AddDate(0, 0, step)
+		if day.Year() != 2026 {
+			return time.Time{}, false
+		}
+		if isTradingDay(day) {
+			return day, true
+		}
+	}
+	return time.Time{}, false
+}
+
+func isTradingDay(day time.Time) bool {
+	if day.Weekday() == time.Saturday || day.Weekday() == time.Sunday {
+		return false
+	}
+	date := day.Format("2006-01-02")
+	holidays := [][2]string{{"2026-01-01", "2026-01-03"}, {"2026-02-15", "2026-02-23"}, {"2026-04-04", "2026-04-06"}, {"2026-05-01", "2026-05-05"}, {"2026-06-19", "2026-06-21"}, {"2026-09-25", "2026-09-27"}, {"2026-10-01", "2026-10-07"}}
+	for _, h := range holidays {
+		if date >= h[0] && date <= h[1] {
+			return false
+		}
+	}
+	return true
 }

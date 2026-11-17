@@ -83,6 +83,14 @@ public actor APIClient {
         return response.contracts
     }
 
+    public func chart(symbol: String) async throws -> PriceChart {
+        var components = URLComponents()
+        components.path = "/v1/chart"
+        components.queryItems = [URLQueryItem(name: "symbol", value: symbol)]
+        guard let path = components.string else { throw PriceCoreError.invalidServerResponse }
+        return try await request(path: path, timeout: 20)
+    }
+
     public func subscriptions() async throws -> [String] {
         let response: SubscriptionsResponse = try await request(path: "/v1/subscriptions")
         return response.symbols
@@ -181,10 +189,10 @@ public actor APIClient {
 
     private func request<Response: Decodable>(
         path: String, method: String = "GET", body: Data? = nil,
-        authenticated: Bool = true
+        authenticated: Bool = true, timeout: TimeInterval = 60
     ) async throws -> Response {
         let url = try endpoint(path)
-        var request = URLRequest(url: url)
+        var request = URLRequest(url: url, timeoutInterval: timeout)
         request.httpMethod = method
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         if authenticated {

@@ -13,6 +13,7 @@ import (
 	"pricereminder/server/internal/api"
 	"pricereminder/server/internal/apns"
 	"pricereminder/server/internal/binance"
+	"pricereminder/server/internal/chart"
 	"pricereminder/server/internal/config"
 	"pricereminder/server/internal/domain"
 	"pricereminder/server/internal/gold"
@@ -78,6 +79,7 @@ func main() {
 	handler.Handle("GET /v1/gold/quote", goldService)
 	apiServer := api.New(dataStore, catalog, hub, iosWorker, configuration.AllowedOrigin, logger)
 	handler.Handle("GET /v2/stream", apiServer.TradeRelayHandler(relay))
+	handler.Handle("GET /v1/chart", apiServer.ChartHandler(chart.New(httpClient, configuration.BinanceRESTURL)))
 	handler.Handle("/", apiServer.Handler())
 	server := &http.Server{
 		Addr:              configuration.ListenAddr,
