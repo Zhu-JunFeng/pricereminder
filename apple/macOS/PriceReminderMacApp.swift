@@ -104,14 +104,18 @@ struct MenuPanel: View {
             }
             if let error = model.positionError { Text(error).font(.caption).foregroundStyle(AppTheme.fall).padding(12) }
             if showPanelCharts && model.chartAuthorizationRequired {
-                HStack {
-                    Text("查看走势需要授权服务端连接")
-                        .font(.caption).foregroundStyle(.secondary)
-                    Spacer()
-                    Button(model.authorizingServer ? "正在授权…" : "授权") {
-                        Task { await model.authorizeServer() }
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack {
+                        Text("查看走势需要授权服务端连接")
+                            .font(.caption).foregroundStyle(.secondary)
+                        Spacer()
+                        ServerAuthorizationButton(title: "授权")
                     }
-                    .disabled(model.authorizingServer)
+                    Text(ServerAuthorizationButton.explanation)
+                        .font(.caption2).foregroundStyle(.secondary)
+                    if let message = model.serverAuthorizationMessage {
+                        Text(message).font(.caption2).foregroundStyle(.secondary)
+                    }
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 8)
@@ -336,6 +340,11 @@ private struct PanelDayChart: View {
     let symbol: String
     let now: Date
 
+    private func chartDimension(_ series: PriceChart) -> String {
+        let minutes = max(1, series.intervalMS / 60_000)
+        return "\(minutes) 分钟" + (series.symbol == GoldQuote.symbol ? "分时" : " K 线")
+    }
+
     private var window: Int64 {
         let reference = symbol == GoldQuote.symbol ? now.addingTimeInterval(-20 * 3600) : now
         return BeijingDailyPrice.startMilliseconds(at: reference)
@@ -351,6 +360,7 @@ private struct PanelDayChart: View {
                 .accessibilityLabel("\(model.displaySymbol(symbol))走势，\(series.date)")
                 HStack {
                     Text(series.date)
+                    Text(chartDimension(series))
                     if series.symbol == GoldQuote.symbol || series.stale || failed {
                         Text("更新于 \(lastUpdate(series.updatedAt))")
                     }
@@ -738,10 +748,7 @@ struct MacSettingsView: View {
 
                 HStack {
                     Button("刷新状态") { Task { await model.refreshSelfCheck() } }
-                    Button(model.authorizingServer ? "正在授权…" : "授权服务端连接") {
-                        Task { await model.authorizeServer() }
-                    }
-                    .disabled(model.authorizingServer)
+                    ServerAuthorizationButton(title: "授权服务端连接")
                     Button("发送测试通知") {
                         Task {
                             testResult = await model.sendTestNotification()
@@ -756,7 +763,7 @@ struct MacSettingsView: View {
                 if let message = model.serverAuthorizationMessage {
                     Text(message).font(.caption).foregroundStyle(.secondary)
                 }
-                Text("自动重连不会弹出钥匙串密码窗口；仅主动授权时可能需要系统确认。")
+                Text(ServerAuthorizationButton.explanation + " 自动重连不会弹出密码窗口；拒绝后可手动重试。")
                     .font(.caption).foregroundStyle(.secondary)
                 Spacer()
             }
@@ -824,12 +831,12 @@ struct MacSettingsView: View {
                 Label("暂时无法加载合约目录", systemImage: "wifi.exclamationmark")
             } description: {
                 Text(model.contractAuthorizationRequired ? model.serverAuthorizationMessage ?? error : error)
+                if model.contractAuthorizationRequired {
+                    Text(ServerAuthorizationButton.explanation)
+                }
             } actions: {
                 if model.contractAuthorizationRequired {
-                    Button(model.authorizingServer ? "正在授权…" : "授权服务端连接") {
-                        Task { await model.authorizeServer() }
-                    }
-                    .disabled(model.authorizingServer)
+                    ServerAuthorizationButton(title: "授权服务端连接")
                 }
                 Button("重新加载") { Task { await model.bootstrap(platform: "macos") } }
                     .disabled(model.authorizingServer)
@@ -1093,5 +1100,20 @@ private struct PositionEditor: View {
                 symbol = setting.symbol; side = setting.positionSide; price = setting.priceText; leverage = String(setting.leverage)
             }
         }
+    }
+}
+
+/// Keep guidance inline: authorizing should not require an extra app dialog.
+private struct ServerAuthorizationButton: View {
+    @EnvironmentObject private var model: AppModel
+    static let explanation = "钥匙串用于安全保存服务端凭据。如出现系统窗口，请输入本机登录密码并选“始终允许”；“允许”仅本次有效。"
+    let title: String
+
+    var body: some View {
+        Button(model.authorizingServer ? "正在授权…" : title) {
+            Task { await model.authorizeServer() }
+        }
+        .disabled(model.authorizingServer)
+        .help(Self.explanation)
     }
 }

@@ -14,13 +14,28 @@ actor ServerConnectionService {
     private var authentication: Task<APIClient, Error>?
     private var authenticationID: UUID?
     private var credential: Task<String?, Error>?
+    private var authorization: Task<APIClient, Error>?
 
     func authorize(platform: String, displayName: String) async throws -> APIClient {
         if let client { return client }
+        // All explicit authorization entry points share one interactive attempt.
+        // In particular, callers waiting on a failed silent attempt must not each
+        // clear a newer attempt and open another system prompt.
+        if let authorization { return try await authorization.value }
+        let attempt = Task { try await self.authorizeOnce(platform: platform, displayName: displayName) }
+        authorization = attempt
+        defer { authorization = nil }
+        return try await attempt.value
+    }
+
+    private func authorizeOnce(platform: String, displayName: String) async throws -> APIClient {
         if let authentication {
+            let previousID = authenticationID
             do { return try await authentication.value } catch { }
-            self.authentication = nil
-            authenticationID = nil
+            if authenticationID == previousID {
+                self.authentication = nil
+                authenticationID = nil
+            }
         }
         credential = nil
         return try await authenticatedClient(platform: platform, displayName: displayName, allowInteraction: true)
